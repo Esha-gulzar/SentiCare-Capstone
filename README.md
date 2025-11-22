@@ -3,14 +3,11 @@ Voice-Based Mental Health Support System (FYP)
 
 # My Project
 
-This is my project hosted on Google Colab. You can open and run it directly in Colab by clicking the badge below:
+This is our project prototype hosted on Google Colab.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1xOwzxb_d5-tdv8ykLou48vePpDPjhobe?usp=sharing)
 
 ---
-
-## About
-Write a short description of your project here.
 
 
 ## Project Overview
@@ -63,4 +60,5 @@ SentiCare-FYP/
 2. **Collect Sample Voice Data:** Small dataset of basic emotions (anxious, happy, neutral).  
 3. **Build Mini Toy Model:** Voice → Feature extraction → Emotion classification → Chatbot response.  
 4. **Evaluate Feasibility:** Decide whether to expand in Urdu or focus on English datasets.  
+
 
