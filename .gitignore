@@ -1,0 +1,25 @@
+# create_gitignore.py
+
+gitignore_content = """# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual env
+venv/
+.env/
+
+# Artifacts / models
+artifacts/*.joblib
+
+# OS
+.DS_Store
+Thumbs.db
+"""
+
+with open('.gitignore', 'w') as f:
+    f.write(gitignore_content)
+
+print(".gitignore file created successfully!")
