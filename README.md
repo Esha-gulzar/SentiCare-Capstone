@@ -61,4 +61,21 @@ SentiCare-FYP/
 3. **Build Mini Toy Model:** Voice → Feature extraction → Emotion classification → Chatbot response.  
 4. **Evaluate Feasibility:** Decide whether to expand in Urdu or focus on English datasets.  
 
+# Enhanced anxiety Dataset Preprocessing
 
+# Anxiety Level Prediction
+
+Machine learning project to predict anxiety level (1–10) using physiological and lifestyle features.
+
+## Structure
+- preprocessing/ → data cleaning & encoding
+- training/ → model training scripts
+- notebooks/ → experiments
+- artifacts/ → saved models (local only)
+
+## Model
+- Random Forest Regressor
+- Metrics: MSE, MAE, R²
+
+## Status
+Baseline model complete.
