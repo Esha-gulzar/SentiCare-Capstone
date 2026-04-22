@@ -13,6 +13,14 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
+# ====================== MongoDB Connection ======================
+MONGO_URI = "mongodb+srv://zainsheikh:<db_password>@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
+client = MongoClient(MONGO_URI)
+db = client["senticare"]
+cbt_collection = db["cbt_templates"]
+print("✅ Connected to MongoDB - CBT templates ready!")
+# ================================================================
+
 # Load Whisper model (using base model for better performance)
 print("Loading Whisper model...")
 try:
