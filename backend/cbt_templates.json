@@ -1,0 +1,122 @@
+[
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 7,
+    "max_anxiety_level": 10,
+    "title": "Immediate Calm - 4-7-8 Breathing",
+    "description": "Quick physiological reset for high anxiety",
+    "sample_response": "I can hear how anxious you're feeling right now, and that's completely okay. Let's bring your nervous system down first. We'll do the 4-7-8 breathing together. Inhale quietly through your nose for 4 seconds… hold for 7… exhale through your mouth for 8. Ready? Let's start.",
+    "exercise": "Repeat the 4-7-8 cycle 4 times. Notice how your body feels after each round.",
+    "tags": ["breathing", "physiological", "immediate_relief"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 7,
+    "max_anxiety_level": 10,
+    "title": "5-4-3-2-1 Grounding",
+    "description": "Sensory grounding to stop spiraling",
+    "sample_response": "Your anxiety feels really loud right now. Let's anchor you back to the present. Name 5 things you can see, 4 you can touch, 3 you can hear, 2 you can smell, and 1 you can taste. I'll guide you step by step.",
+    "exercise": "Go through each sense one by one and describe them out loud or type them here.",
+    "tags": ["grounding", "sensory", "crisis"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 5,
+    "max_anxiety_level": 10,
+    "title": "Catch the Catastrophic Thought",
+    "description": "Identify the worst-case thought driving the anxiety",
+    "sample_response": "It sounds like your mind is jumping to the worst possible outcome. That's super common in anxiety. Can you tell me: what is the scariest thought going through your head right now?",
+    "exercise": "Write down the exact thought. We'll challenge it together next.",
+    "tags": ["cognitive_restructuring", "thought_challenge"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 6,
+    "max_anxiety_level": 10,
+    "title": "Decatastrophizing",
+    "description": "Realistically test how bad the outcome would actually be",
+    "sample_response": "When anxiety hits, we often imagine disaster. Let's test that fear together. If the worst thing you’re worried about actually happened, what would you do? How would you cope?",
+    "exercise": "Rate how bad it would really be (0-100) and list 3 ways you could handle it.",
+    "tags": ["decatastrophizing", "reality_testing"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 5,
+    "max_anxiety_level": 9,
+    "title": "Evidence For vs Evidence Against",
+    "description": "Balanced thought record for anxious predictions",
+    "sample_response": "Your anxiety is telling you something terrible is likely to happen. Let's look at the facts. What evidence do you have that supports this fear? And what evidence suggests it might not be as bad as it feels?",
+    "exercise": "List 3 pieces of evidence for and 3 against the anxious thought.",
+    "tags": ["evidence", "cognitive_restructuring"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 4,
+    "max_anxiety_level": 8,
+    "title": "Worry Postponement",
+    "description": "Delay worry to reduce its power",
+    "sample_response": "I notice your mind is stuck in a worry loop. This technique is really effective for anxiety: let's schedule your worry for later. Tell me the worry and we'll park it until a specific time you choose.",
+    "exercise": "Set a 10-minute worry time later today and write down the worry to revisit then.",
+    "tags": ["worry_delay", "postponement"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 4,
+    "max_anxiety_level": 7,
+    "title": "Reframing Anxiety as Energy",
+    "description": "Shift from fear to helpful energy",
+    "sample_response": "Anxiety is uncomfortable, but it’s also energy. Your body is preparing you. What if we reframed this feeling as excitement or helpful alertness instead of danger?",
+    "exercise": "Complete the sentence: 'My anxiety is trying to protect me by…'",
+    "tags": ["reframing", "mindset"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 6,
+    "max_anxiety_level": 10,
+    "title": "Progressive Muscle Relaxation (Quick)",
+    "description": "Release physical tension from anxiety",
+    "sample_response": "Anxiety lives in your body too. Let's release it. We'll tense and relax muscle groups one by one. Start with your shoulders – tense them up for 5 seconds… now let them drop completely.",
+    "exercise": "Follow the tense-relax sequence for shoulders, arms, hands, and legs.",
+    "tags": ["pmr", "relaxation"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 3,
+    "max_anxiety_level": 9,
+    "title": "Self-Compassion Break",
+    "description": "Kindness toward yourself during anxiety",
+    "sample_response": "You're being really hard on yourself for feeling anxious. Can we try something kinder? Many people feel exactly like you do right now. You're not broken – you're human.",
+    "exercise": "Place hand on heart and say: 'This is hard, and I'm doing my best.'",
+    "tags": ["self_compassion", "kindness"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 5,
+    "max_anxiety_level": 8,
+    "title": "Identify Your Safety Behaviors",
+    "description": "Spot habits that keep anxiety alive",
+    "sample_response": "Anxiety often makes us do things to feel safe (checking phone, avoiding, seeking reassurance). These actually keep the anxiety going long-term. What safety behavior have you noticed yourself doing?",
+    "exercise": "List 1–2 safety behaviors and we'll plan how to drop one this week.",
+    "tags": ["safety_behaviors", "behavioral"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 4,
+    "max_anxiety_level": 10,
+    "title": "Anxiety Thought Record",
+    "description": "Full CBT thought record in chat",
+    "sample_response": "Let's do a quick thought record together – this is one of the most powerful CBT tools for anxiety. Situation → Automatic Thought → Anxiety Level (1-10) → Evidence → Balanced Thought.",
+    "exercise": "I'll guide you through each column step by step.",
+    "tags": ["thought_record", "core_cbt"]
+  },
+  {
+    "emotion": "anxious",
+    "min_anxiety_level": 1,
+    "max_anxiety_level": 4,
+    "title": "Maintenance – Anxiety Awareness",
+    "description": "Build awareness when anxiety is low",
+    "sample_response": "Even mild anxiety is worth noticing early. What situations or thoughts usually start your anxiety rising? Recognizing the early signs helps us catch it before it gets big.",
+    "exercise": "List your top 3 early warning signs of rising anxiety.",
+    "tags": ["prevention", "awareness"]
+  }
+]
