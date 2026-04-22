@@ -14,7 +14,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ====================== MongoDB Connection ======================
-MONGO_URI = "mongodb+srv://zainsheikh:<db_password>@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://zainsheikh:4qRUapNsuDkdZsgf@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
 client = MongoClient(MONGO_URI)
 db = client["senticare"]
 cbt_collection = db["cbt_templates"]
