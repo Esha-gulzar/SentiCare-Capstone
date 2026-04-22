@@ -5,7 +5,7 @@ from datetime import datetime
 
 # ====================== CONFIG ======================
 # TODO: Replace with your MongoDB Atlas connection string
-MONGO_URI = "mongodb+srv://zainsheikh:<db_password>@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://zainsheikh:4qRUapNsuDkdZsgf@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
 DATABASE_NAME = "senticare"
 COLLECTION_NAME = "cbt_templates"
 # ===================================================
