@@ -346,6 +346,39 @@ def speak():
     except Exception as e:
         print(f"Error in speak: {str(e)}")
         return jsonify({'error': str(e)}), 500
+#New CBT endpoint
+@app.route('/api/cbt/response', methods=['POST'])
+def get_cbt_response():
+    try:
+        data = request.get_json()
+        emotion = data.get('emotion')
+        anxiety_level = int(data.get('anxiety_level', 0))
+
+        if emotion != "anxious":
+            return jsonify({"error": "Currently only anxiety CBT templates are available"}), 400
+
+        # Find best matching template
+        template = cbt_collection.find_one({
+            "emotion": "anxious",
+            "min_anxiety_level": {"$lte": anxiety_level},
+            "max_anxiety_level": {"$gte": anxiety_level}
+        })
+
+        # Fallback to any anxiety template if no exact match
+        if not template:
+            template = cbt_collection.find_one({"emotion": "anxious"})
+
+        if template:
+            # Remove MongoDB _id for clean JSON response
+            template.pop('_id', None)
+            template.pop('created_at', None)
+            template.pop('updated_at', None)
+            return jsonify(template)
+        else:
+            return jsonify({"error": "No CBT template found"}), 404
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     print("Starting Flask server...")
