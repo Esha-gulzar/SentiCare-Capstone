@@ -10,6 +10,7 @@ __pycache__/
 # Virtual env
 venv/
 .env/
+backend/.env
 
 # Artifacts / models
 artifacts/*.joblib

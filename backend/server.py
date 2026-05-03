@@ -1,6 +1,3 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import whisper
 from gtts import gTTS
 import io
 import base64
@@ -9,12 +6,15 @@ import os
 import tempfile
 from pymongo import MongoClient
 from datetime import datetime
+from dotenv import load_dotenv   # <--- new import
 
 app = Flask(__name__)
 CORS(app)
 
 # ====================== MongoDB Connection ======================
-MONGO_URI = "mongodb+srv://zainsheikh:4qRUapNsuDkdZsgf@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
+load_dotenv()   # loads variables from .env file
+MONGO_URI = os.getenv("MONGO_URI")   # reads the secret from environment
+
 client = MongoClient(MONGO_URI)
 db = client["senticare"]
 cbt_collection = db["cbt_templates"]

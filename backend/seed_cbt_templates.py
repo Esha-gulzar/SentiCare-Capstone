@@ -2,11 +2,14 @@ from pymongo import MongoClient
 import json
 import os
 from datetime import datetime
+from dotenv import load_dotenv   # <--- new import
 
 # ====================== CONFIG ======================
-MONGO_URI = "mongodb+srv://zainsheikh:4qRUapNsuDkdZsgf@cluster0.zszp3y1.mongodb.net/?appName=Cluster0"
-DATABASE_NAME = "senticare"
-COLLECTION_NAME = "cbt_templates"
+load_dotenv()   # loads variables from .env file
+MONGO_URI = os.getenv("MONGO_URI")   # reads the secret from environment
+
+DATABASE_NAME = "senticare"         # not secret, safe to keep hardcoded
+COLLECTION_NAME = "cbt_templates"   # same
 # ===================================================
 
 def seed_cbt_templates():
