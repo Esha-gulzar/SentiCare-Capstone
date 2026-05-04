@@ -4,3 +4,4 @@ gtts
 requests
 numpy
 joblib
+pandas
