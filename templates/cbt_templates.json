@@ -1,0 +1,110 @@
+[
+  {
+    "emotion": "anxiety",
+    "level": "low",
+    "therapy": {
+      "validation": "It is completely normal to feel a little anxious sometimes. You are doing well.",
+      "intervention_steps": [
+        "Take a slow deep breath in for 4 counts",
+        "Hold for 4 counts",
+        "Exhale slowly for 4 counts",
+        "Repeat 3 times"
+      ],
+      "grounding_statement": "You are safe right now. This feeling will pass."
+    },
+    "guided_questions": [
+      "What is one small thing you can do today to feel better?",
+      "Is there someone you trust you can talk to?"
+    ]
+  },
+  {
+    "emotion": "anxiety",
+    "level": "medium",
+    "therapy": {
+      "validation": "I hear you. Anxiety at this level can feel overwhelming but you are not alone.",
+      "intervention_steps": [
+        "Identify the specific thought causing anxiety",
+        "Challenge it: is it based on fact or fear?",
+        "Replace it with a balanced thought",
+        "Write it down if possible"
+      ],
+      "grounding_statement": "You have handled difficult moments before. You can handle this too."
+    },
+    "guided_questions": [
+      "What triggered this feeling today?",
+      "What would you tell a friend feeling this way?"
+    ]
+  },
+  {
+    "emotion": "anxiety",
+    "level": "high",
+    "therapy": {
+      "validation": "Thank you for sharing this. What you are feeling is serious and you deserve proper support.",
+      "intervention_steps": [
+        "Stop and focus only on your breathing right now",
+        "Name 5 things you can see around you",
+        "Name 4 things you can touch",
+        "Consider reaching out to a mental health professional"
+      ],
+      "grounding_statement": "You are brave for seeking help. Professional support can make a real difference."
+    },
+    "guided_questions": [
+      "Have you spoken to anyone about how you are feeling?",
+      "Would you be open to speaking with a counselor?"
+    ]
+  },
+  {
+    "emotion": "stress",
+    "level": "low",
+    "therapy": {
+      "validation": "A little stress is normal and can even be motivating. You are managing well.",
+      "intervention_steps": [
+        "Take a short 5 minute break",
+        "Stretch or take a brief walk",
+        "Prioritize your top 3 tasks for today",
+        "Celebrate small wins"
+      ],
+      "grounding_statement": "You are in control. One step at a time is enough."
+    },
+    "guided_questions": [
+      "What is one thing you can let go of today?",
+      "What has been working well for you lately?"
+    ]
+  },
+  {
+    "emotion": "stress",
+    "level": "medium",
+    "therapy": {
+      "validation": "It sounds like you are carrying a lot right now. That takes real strength to acknowledge.",
+      "intervention_steps": [
+        "Write down everything stressing you",
+        "Separate what you can and cannot control",
+        "Focus your energy only on what you can control",
+        "Set one small achievable goal for today"
+      ],
+      "grounding_statement": "You do not have to solve everything at once. Progress matters more than perfection."
+    },
+    "guided_questions": [
+      "What is taking up most of your mental energy right now?",
+      "What would help you feel even 10% better today?"
+    ]
+  },
+  {
+    "emotion": "stress",
+    "level": "high",
+    "therapy": {
+      "validation": "This level of stress is serious and your feelings are completely valid. You need and deserve support.",
+      "intervention_steps": [
+        "Pause all non-urgent tasks if possible",
+        "Talk to someone you trust today",
+        "Focus only on basic self-care: sleep, water, food",
+        "Consider speaking to a counselor or doctor"
+      ],
+      "grounding_statement": "Asking for help is a sign of strength not weakness. You matter."
+    },
+    "guided_questions": [
+      "Is there anyone who can help lighten your load right now?",
+      "When did you last feel at peace and what helped then?"
+    ]
+  }
+]

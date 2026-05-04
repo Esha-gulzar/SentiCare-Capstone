@@ -1,0 +1,48 @@
+{
+  "type": "mental_health_screening",
+  "description": "Initial symptom screening for anxiety, stress, and depression.",
+  "scale": "0 = Not at all, 1 = Several days, 2 = More than half the days, 3 = Nearly every day",
+  "questions": [
+    {
+      "id": "feeling_nervous",
+      "question": "Over the past two weeks, how often have you felt nervous, anxious, or on edge?",
+      "domain": "anxiety"
+    },
+    {
+      "id": "uncontrollable_worry",
+      "question": "How often have you been unable to stop or control worrying?",
+      "domain": "anxiety"
+    },
+    {
+      "id": "restlessness",
+      "question": "How often have you felt restless or hard to relax?",
+      "domain": "anxiety"
+    },
+    {
+      "id": "feeling_down",
+      "question": "How often have you felt down, depressed, or hopeless?",
+      "domain": "depression"
+    },
+    {
+      "id": "loss_of_interest",
+      "question": "How often have you had little interest or pleasure in doing things?",
+      "domain": "depression"
+    },
+    {
+      "id": "fatigue",
+      "question": "How often have you felt tired or low in energy?",
+      "domain": "depression"
+    },
+    {
+      "id": "overwhelmed",
+      "question": "How often have you felt overwhelmed or unable to cope with daily responsibilities?",
+      "domain": "stress"
+    },
+    {
+      "id": "irritability",
+      "question": "How often have you been easily irritated or frustrated?",
+      "domain": "stress"
+    }
+  ]
+}
+
