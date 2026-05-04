@@ -3,3 +3,4 @@ flask-cors
 gtts
 requests
 numpy
+joblib
