@@ -1,4 +1,4 @@
-# SentiCare
+<!-- # SentiCare
 Voice-Based Mental Health Support System (FYP)
 
 # My Project
@@ -95,4 +95,13 @@ CBT-based coping strategies.
 - MongoDB conversation storage
 
 ## Tech Stack
-Python, Flask, React, MongoDB, Scikit-learn, Pandas
+Python, Flask, React, MongoDB, Scikit-learn, Pandas -->
+---
+title: SentiCare Capstone
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_file: app.py
+pinned: false
+---
