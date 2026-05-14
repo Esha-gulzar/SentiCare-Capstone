@@ -1,22 +1,28 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, ReferenceLine, CartesianGrid,
+} from "recharts";
+import "./App.css";
+import VoiceCheckIn from "./VoiceCheckIn";
 
 const API_URL = "http://localhost:5000/chat";
 const TTS_URL = "http://localhost:5000/tts";
+const MAX_INPUT_CHARS = 500;
 
 // ════════════════════════════════════════════════════════════════
 //  STORAGE HELPERS
-//  - sessionStorage → current login (lost on browser close, kept on refresh)
-//  - localStorage   → user accounts + chat sessions (permanent)
 // ════════════════════════════════════════════════════════════════
-const session = {
-  get: (k) => { try { return JSON.parse(sessionStorage.getItem(k)); } catch { return null; } },
-  set: (k, v) => sessionStorage.setItem(k, JSON.stringify(v)),
-  del: (k) => sessionStorage.removeItem(k),
-};
 const local = {
   get: (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
   set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
   del: (k) => localStorage.removeItem(k),
+};
+
+const session = {
+  get: (k) => { try { return JSON.parse(sessionStorage.getItem(k)); } catch { return null; } },
+  set: (k, v) => sessionStorage.setItem(k, JSON.stringify(v)),
+  del: (k) => sessionStorage.removeItem(k),
 };
 
 // ── Therapy detection ───────────────────────────────────────────
@@ -25,341 +31,262 @@ const THERAPY_TRIGGERS = [
   "breathing", "grounding", "progressive muscle", "cognitive", "reframe",
   "cbt", "mindfulness", "relaxation", "coping", "strategy:", "tip:",
   "here is a", "here's a", "let's try", "i recommend",
+  "اقدامات:", "سانس", "قدم",
 ];
 const isTherapyMessage = (text) =>
   THERAPY_TRIGGERS.some(t => text.toLowerCase().includes(t)) && text.length > 120;
 
 const parseTherapyCard = (text) => {
   const lines = text.split(/\n+/).filter(Boolean);
-  const title = lines[0]?.length < 80 ? lines[0].replace(/[*_#]/g, "").trim() : "Therapy Exercise";
+  const title = lines[0]?.length < 80 ? lines[0].replace(/[*_#🔍]/g, "").trim() : "Therapy Exercise";
   const steps = lines.slice(1).filter(l => l.trim().length > 0);
   return { title, steps };
 };
 
-// ── Audio engine (streaming gTTS) ───────────────────────────────
-//
-//  KEY FIX: Instead of fetch() → blob → objectURL (which waits for the
-//  FULL mp3 to download before playing), we set audio.src directly to
-//  the TTS endpoint URL with text as a query param.  The browser then
-//  streams the response and fires `canplay` as soon as the first chunk
-//  arrives (~0.3-0.8 s), so the user hears audio almost immediately.
-//
+// ── Input validation ────────────────────────────────────────────
+const validateInput = (text, lang) => {
+  const trimmed = text.trim();
+  if (!trimmed) return lang === "ur" ? "پیغام خالی نہیں ہو سکتا۔" : "Message cannot be empty.";
+  if (trimmed.length < 1) return lang === "ur" ? "پیغام بہت چھوٹا ہے۔" : "Message is too short.";
+  if (trimmed.length > MAX_INPUT_CHARS)
+    return lang === "ur"
+      ? `پیغام ${MAX_INPUT_CHARS} حروف سے زیادہ نہیں ہو سکتا۔`
+      : `Message must be under ${MAX_INPUT_CHARS} characters.`;
+  if (lang === "ur") {
+    const urduRange = /[\u0600-\u06FF]/;
+    const numericOnly = /^[\d\s]+$/;
+    if (!urduRange.test(trimmed) && !numericOnly.test(trimmed)) {
+      return "براہ کرم اردو میں لکھیں یا نمبر درج کریں۔";
+    }
+  }
+  return "";
+};
+
+// ── Audio engine ─────────────────────────────────────────────────
 const sharedAudio = new Audio();
 sharedAudio.preload = "none";
 
 const stopAudio = () => {
   sharedAudio.pause();
   sharedAudio.src = "";
-  // clear all event handlers to avoid stale callbacks firing
   sharedAudio.oncanplay = null;
   sharedAudio.onended = null;
   sharedAudio.onerror = null;
 };
 
-const playTTS = (text, rate, onStart, onEnd, onError) => {
+const playTTS = (text, rate, lang, onStart, onEnd, onError) => {
   stopAudio();
-
   const clean = text
     .replace(/[\u{1F300}-\u{1FFFF}]/gu, "")
     .replace(/[🔍💚📋✅🌱🟠🔵🟢]/g, "")
     .replace(/\*+/g, " ")
     .replace(/\n+/g, ". ")
     .trim();
-
   if (!clean) { onError(); return; }
-
-  // Build GET URL — browser streams it, no blob needed
-  const params = new URLSearchParams({ text: clean });
+  const params = new URLSearchParams({ text: clean, lang });
   sharedAudio.src = `${TTS_URL}?${params.toString()}`;
   sharedAudio.playbackRate = Math.min(Math.max(rate, 0.5), 2);
-
-  // `canplay` fires as soon as the browser has enough data to start
-  sharedAudio.oncanplay = () => {
-    onStart();                     // ← user sees "Speaking..." almost instantly
-  };
+  sharedAudio.oncanplay = () => onStart();
   sharedAudio.onended = onEnd;
-  sharedAudio.onerror = () => {
-    console.error("TTS audio error");
-    onError();
-  };
-
-  // play() returns a promise; errors are handled by onerror above
-  sharedAudio.play().catch((err) => {
-    console.error("TTS play() error:", err);
-    onError();
-  });
+  sharedAudio.onerror = () => { console.error("TTS error"); onError(); };
+  sharedAudio.play().catch(err => { console.error("TTS play() error:", err); onError(); });
 };
 
 // ════════════════════════════════════════════════════════════════
-//  STYLES
+//  UI STRINGS — bilingual
 // ════════════════════════════════════════════════════════════════
-const styles = `
-  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600&display=swap');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #e8f5ee; min-height: 100vh; font-family: 'Nunito', sans-serif; }
+const UI = {
+  en: {
+    appName:        "SentiCare",
+    tagline:        "Your personal mental health companion",
+    nav_chat:       "Mental Health Chat",
+    nav_sessions:   "My Sessions",
+    nav_resources:  "Resources",
+    nav_signout:    "Sign Out",
+    voice_on:       "Voice ON",
+    voice_off:      "Voice OFF",
+    voice_settings: "🔊 Voice Settings",
+    speed:          "Speed",
+    tip_title:      "💡 Tip of the day",
+    lang_toggle:    "اردو",
+    topbar_title:   "Mental Health Assistant",
+    topbar_sub:     "AI-powered screening & CBT-based support",
+    speaking:       "Speaking...",
+    loading_voice:  "Loading voice…",
+    available:      "Available",
+    greeting_name:  (n) => `Hello ${n}, I am here for you`,
+    empty_sub:      (voiceOn) => `SentiCare guides you through a short mental health screening and provides personalised CBT-based support. ${voiceOn ? "Voice is ON — I will speak to you." : "Turn on voice in the sidebar."}`,
+    quick1:         "Hi, I need support",
+    quick2:         "I feel anxious",
+    quick3:         "I am feeling stressed",
+    senticare:      "SentiCare",
+    replay:         "🔊 Replay",
+    stop:           "⏹ Stop",
+    view_card:      "🃏 View Card",
+    placeholder:    "Share how you are feeling today…",
+    input_hint:     "Press Enter to send · Shift+Enter for new line",
+    sessions_title: "My Sessions",
+    sessions_sub:   "Your past mental health conversations",
+    sessions_head:  "Session History",
+    sessions_count: (n) => `${n} saved session${n !== 1 ? "s" : ""}`,
+    new_chat:       "+ New Chat",
+    clear_all:      "🗑 Clear All",
+    no_sessions:    "No sessions yet.",
+    no_sessions_sub:"Complete a chat to see it saved here.",
+    start_first:    "Start your first session →",
+    session_on:     "Session —",
+    messages:       "messages",
+    anxiety_tag:    "🟠 Anxiety",
+    stress_tag:     "🔵 Stress",
+    general_tag:    "🟢 General",
+    delete:         "🗑 Delete",
+    resources_title:"Mental Health Resources",
+    resources_sub:  "Practical tools and evidence-based strategies",
+    self_help:      "Self-Help Tools",
+    self_help_sub:  "Things you can try right now to feel better",
+    checklist:      "✅ Daily Wellness Checklist",
+    hotline_title:  "Need immediate help?",
+    hotline_text:   <>In Pakistan, the <strong>Umang helpline</strong> is available at <strong>0317-4288665</strong>. You deserve support and you are not alone.</>,
+    therapy_tag:    "🌿 Therapy Exercise",
+    listen:         "🔊 Listen to This",
+    stop_speaking:  "Stop Speaking",
+    got_it:         "✓ Got It",
+    loading_dots:   "⏳ Loading…",
+    confirm_all_title: "Clear All Sessions?",
+    confirm_all_text:  "This will permanently delete all your saved sessions. This cannot be undone.",
+    confirm_one_title: "Delete This Session?",
+    confirm_one_text:  "This session will be permanently deleted. Are you sure?",
+    confirm_cancel: "Cancel",
+    confirm_delete: "Delete",
+    login_title:    "Welcome back 👋",
+    signup_title:   "Create your account",
+    name_label:     "Full Name",
+    email_label:    "Email Address",
+    pass_label:     "Password",
+    confirm_label:  "Confirm Password",
+    signin_btn:     "Sign In",
+    signup_btn:     "Create Account",
+    wait_btn:       "Please wait…",
+    have_account:   "Already have an account?",
+    no_account:     "Don't have an account?",
+    sign_in_link:   "Sign In",
+    sign_up_link:   "Sign Up",
+    info_box:       <>Your account and session history are <strong>always saved</strong>. Sign in to continue where you left off.</>,
+    new_here:       "NEW HERE?",
+    have_acct:      "HAVE AN ACCOUNT?",
+    char_count:     (n, max) => `${n} / ${max}`,
+    toast_session:  "Session saved ✓",
+    toast_deleted:  "Session deleted",
+    toast_all_del:  "All sessions cleared",
+    menu:           "Menu",
+    fb_helpful:     "👍 Helpful",
+    fb_not_helpful: "👎 Not helpful",
+    fb_thanks_up:   "✓ Thanks! Response style saved.",
+    fb_thanks_down: "✓ Got it. We'll adapt next time.",
+    ppo_switching:  "⚡ Adapting response strategy for you…",
+    trend_title:    "📈 Emotional Trend",
+    escalate_msg:   "⚠️ Your last 3 sessions show high severity. Please consider reaching out to the Umang helpline: 0317-4288665. You are not alone.",
+    trend_low:      "Low",
+    trend_med:      "Med",
+    trend_high:     "High",
+  },
+  ur: {
+    appName:        "سینٹی کیئر",
+    tagline:        "آپ کا ذہنی صحت کا ساتھی",
+    nav_chat:       "ذہنی صحت چیٹ",
+    nav_sessions:   "میرے سیشن",
+    nav_resources:  "وسائل",
+    nav_signout:    "سائن آؤٹ",
+    voice_on:       "آواز چالو",
+    voice_off:      "آواز بند",
+    voice_settings: "🔊 آواز کی ترتیبات",
+    speed:          "رفتار",
+    tip_title:      "💡 آج کی نصیحت",
+    lang_toggle:    "English",
+    topbar_title:   "ذہنی صحت معاون",
+    topbar_sub:     "اے آئی پر مبنی اسکریننگ اور سی بی ٹی معاونت",
+    speaking:       "بول رہا ہوں...",
+    loading_voice:  "آواز لوڈ ہو رہی ہے…",
+    available:      "دستیاب",
+    greeting_name:  (n) => `السلام علیکم ${n}، میں آپ کے ساتھ ہوں`,
+    empty_sub:      (voiceOn) => `سینٹی کیئر آپ کی ذہنی صحت کی اسکریننگ میں مدد کرتا ہے اور ذاتی نوعیت کی سی بی ٹی معاونت فراہم کرتا ہے۔ ${voiceOn ? "آواز چالو ہے — میں آپ سے بات کروں گا۔" : "سائڈ بار میں آواز چالو کریں۔"}`,
+    quick1:         "السلام علیکم، مجھے مدد چاہیے",
+    quick2:         "مجھے گھبراہٹ محسوس ہو رہی ہے",
+    quick3:         "میں دباؤ میں ہوں",
+    senticare:      "سینٹی کیئر",
+    replay:         "🔊 دوبارہ سنیں",
+    stop:           "⏹ روکیں",
+    view_card:      "🃏 کارڈ دیکھیں",
+    placeholder:    "آج آپ کیسا محسوس کر رہے ہیں؟",
+    input_hint:     "بھیجنے کے لیے Enter دبائیں",
+    sessions_title: "میرے سیشن",
+    sessions_sub:   "آپ کی گزشتہ ذہنی صحت گفتگو",
+    sessions_head:  "سیشن کی تاریخ",
+    sessions_count: (n) => `${n} محفوظ سیشن`,
+    new_chat:       "+ نئی گفتگو",
+    clear_all:      "🗑 سب حذف کریں",
+    no_sessions:    "ابھی کوئی سیشن نہیں۔",
+    no_sessions_sub:"گفتگو مکمل کریں تو یہاں محفوظ ہو گا۔",
+    start_first:    "پہلا سیشن شروع کریں ←",
+    session_on:     "سیشن —",
+    messages:       "پیغامات",
+    anxiety_tag:    "🟠 گھبراہٹ",
+    stress_tag:     "🔵 دباؤ",
+    general_tag:    "🟢 عمومی",
+    delete:         "🗑 حذف",
+    resources_title:"ذہنی صحت کے وسائل",
+    resources_sub:  "عملی آلات اور ثبوت پر مبنی حکمت عملیاں",
+    self_help:      "خود مدد کے آلات",
+    self_help_sub:  "ابھی بہتر محسوس کرنے کے لیے کچھ آزمائیں",
+    checklist:      "✅ روزانہ تندرستی کی فہرست",
+    hotline_title:  "فوری مدد چاہیے؟",
+    hotline_text:   <>پاکستان میں <strong>امنگ ہیلپ لائن</strong> اس نمبر پر دستیاب ہے: <strong>0317-4288665</strong>۔ آپ اکیلے نہیں ہیں۔</>,
+    therapy_tag:    "🌿 علاجی مشق",
+    listen:         "🔊 سنیں",
+    stop_speaking:  "روکیں",
+    got_it:         "✓ سمجھ گیا",
+    loading_dots:   "⏳ لوڈ ہو رہا ہے…",
+    confirm_all_title: "سب سیشن حذف کریں؟",
+    confirm_all_text:  "یہ آپ کے تمام محفوظ سیشن مستقل طور پر حذف کر دے گا۔",
+    confirm_one_title: "یہ سیشن حذف کریں؟",
+    confirm_one_text:  "یہ سیشن مستقل طور پر حذف ہو جائے گا۔ کیا آپ مطمئن ہیں؟",
+    confirm_cancel: "منسوخ",
+    confirm_delete: "حذف کریں",
+    login_title:    "خوش آمدید 👋",
+    signup_title:   "اکاؤنٹ بنائیں",
+    name_label:     "پورا نام",
+    email_label:    "ای میل",
+    pass_label:     "پاس ورڈ",
+    confirm_label:  "پاس ورڈ کی تصدیق",
+    signin_btn:     "سائن ان",
+    signup_btn:     "اکاؤنٹ بنائیں",
+    wait_btn:       "انتظار کریں…",
+    have_account:   "پہلے سے اکاؤنٹ ہے؟",
+    no_account:     "اکاؤنٹ نہیں ہے؟",
+    sign_in_link:   "سائن ان",
+    sign_up_link:   "سائن اپ",
+    info_box:       <>آپ کا اکاؤنٹ اور سیشن کی تاریخ <strong>ہمیشہ محفوظ رہتی ہے۔</strong> جاری رکھنے کے لیے سائن ان کریں۔</>,
+    new_here:       "نئے ہیں؟",
+    have_acct:      "اکاؤنٹ ہے؟",
+    char_count:     (n, max) => `${n} / ${max}`,
+    toast_session:  "سیشن محفوظ ہو گیا ✓",
+    toast_deleted:  "سیشن حذف ہو گیا",
+    toast_all_del:  "تمام سیشن حذف ہو گئے",
+    menu:           "مینو",
+    fb_helpful:     "👍 مددگار",
+    fb_not_helpful: "👎 مددگار نہیں",
+    fb_thanks_up:   "✓ شکریہ! جواب کا انداز محفوظ ہو گیا۔",
+    fb_thanks_down: "✓ سمجھ گئے۔ اگلی بار بہتر کریں گے۔",
+    ppo_switching:  "⚡ آپ کے لیے جواب کی حکمت عملی بدل رہی ہے…",
+    trend_title:    "📈 جذباتی رجحان",
+    escalate_msg:   "⚠️ آپ کے آخری 3 سیشن میں شدت زیادہ رہی ہے۔ براہ کرم امنگ ہیلپ لائن سے رابطہ کریں: 0317-4288665۔ آپ اکیلے نہیں ہیں۔",
+    trend_low:      "کم",
+    trend_med:      "درمیانہ",
+    trend_high:     "زیادہ",
+  },
+};
 
-  /* ── AUTH ── */
-  .auth-bg {
-    min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(135deg, #0e4d2a 0%, #1a7a4a 50%, #2aaa6a 100%); padding: 24px;
-  }
-  .auth-card {
-    background: #ffffff; border-radius: 28px; width: 100%; max-width: 420px;
-    box-shadow: 0 32px 80px rgba(10,40,20,0.35); overflow: hidden;
-    animation: authIn 0.35s cubic-bezier(0.34,1.4,0.64,1);
-  }
-  @keyframes authIn { from{opacity:0;transform:scale(0.9) translateY(24px)} to{opacity:1;transform:scale(1) translateY(0)} }
-  .auth-header { background: linear-gradient(135deg,#1a7a4a 0%,#0e4d2a 100%); padding: 36px 36px 28px; text-align: center; }
-  .auth-logo { width:60px;height:60px;background:#ffffff;border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 16px;box-shadow:0 4px 16px rgba(0,0,0,0.15); }
-  .auth-brand { font-family:'Playfair Display',serif;font-size:1.8rem;color:#ffffff;font-weight:600; }
-  .auth-tagline { font-size:0.82rem;color:#a8d8b8;margin-top:6px;font-weight:500; }
-  .auth-body { padding: 32px 36px 36px; }
-  .auth-title { font-size:1.15rem;font-weight:700;color:#0e4d2a;margin-bottom:22px; }
-  .auth-field { margin-bottom: 16px; }
-  .auth-label { font-size:0.78rem;font-weight:700;color:#3a6a4a;margin-bottom:6px;letter-spacing:0.5px;text-transform:uppercase;display:block; }
-  .auth-input {
-    width:100%;padding:13px 16px;border:2px solid #c8e8d4;border-radius:12px;
-    font-family:'Nunito',sans-serif;font-size:0.92rem;color:#0e4d2a;outline:none;
-    transition:border-color 0.2s,box-shadow 0.2s;background:#f8fdfb;
-  }
-  .auth-input:focus { border-color:#1a7a4a;box-shadow:0 0 0 3px rgba(26,122,74,0.12);background:#fff; }
-  .auth-input.error { border-color:#e53e3e;box-shadow:0 0 0 3px rgba(229,62,62,0.1); }
-  .auth-error { font-size:0.78rem;color:#e53e3e;margin-top:5px;font-weight:600; }
-  .auth-btn {
-    width:100%;padding:14px;background:#1a7a4a;border:none;border-radius:14px;
-    font-family:'Nunito',sans-serif;font-size:0.95rem;font-weight:700;color:#ffffff;
-    cursor:pointer;transition:background 0.15s,transform 0.1s;margin-top:8px;
-    box-shadow:0 4px 16px rgba(26,122,74,0.4);
-  }
-  .auth-btn:hover{background:#15623c;transform:translateY(-1px)}
-  .auth-btn:active{transform:scale(0.98)}
-  .auth-btn:disabled{background:#a8d8b8;cursor:not-allowed;box-shadow:none;transform:none}
-  .auth-switch { text-align:center;margin-top:20px;font-size:0.85rem;color:#4a8a62;font-weight:500; }
-  .auth-switch-link { color:#1a7a4a;font-weight:700;cursor:pointer;text-decoration:underline; }
-  .auth-switch-link:hover{color:#0e4d2a}
-  .auth-divider { display:flex;align-items:center;gap:12px;margin:20px 0; }
-  .auth-divider-line { flex:1;height:1px;background:#c8e8d4; }
-  .auth-divider-text { font-size:0.75rem;color:#7daa90;font-weight:600; }
-  .auth-info-box {
-    background:#f0faf4;border:1.5px solid #c8e8d4;border-radius:12px;
-    padding:12px 16px;margin-bottom:18px;font-size:0.8rem;color:#2a6a3a;
-    font-weight:500;line-height:1.6;display:flex;gap:10px;align-items:flex-start;
-  }
-  .auth-info-icon { font-size:16px;flex-shrink:0;margin-top:1px; }
-
-  /* ── APP LAYOUT ── */
-  .app { height:100vh;display:flex;background:#e8f5ee;overflow:hidden; }
-
-  /* ── SIDEBAR ── */
-  .sidebar {
-    width:260px;background:#1a7a4a;border-right:3px solid #15623c;
-    display:flex;flex-direction:column;padding:18px 14px;flex-shrink:0;height:100vh;overflow:hidden;
-  }
-  .logo-area { display:flex;align-items:center;gap:12px;margin-bottom:18px; }
-  .logo-icon { width:42px;height:42px;background:#ffffff;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0; }
-  .logo-text { font-family:'Playfair Display',serif;font-size:1.75rem;color:#ffffff;font-weight:500; }
-  .user-badge {
-    background:rgba(0,0,0,0.2);border-radius:14px;padding:6px 8px;
-    margin-bottom:14px;display:flex;align-items:center;gap:10px;
-    border:1px solid rgba(255,255,255,0.15);
-  }
-  .user-avatar { width:36px;height:36px;background:#4ade80;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#0e4d2a;flex-shrink:0; }
-  .user-info { flex:1;min-width:0; }
-  .user-name { font-size:0.85rem;font-weight:700;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-  .user-email { font-size:0.72rem;color:#a8d8b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-  .sidebar-label { font-size:0.68rem;color:#7dcda4;letter-spacing:2px;text-transform:uppercase;font-weight:700;margin-bottom:8px; }
-  .sidebar-item {
-    display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:12px;
-    font-size:0.87rem;color:#c8edd8;margin-bottom:2px;cursor:pointer;
-    transition:background 0.15s;font-weight:600;border:none;background:transparent;
-    width:100%;text-align:left;font-family:'Nunito',sans-serif;
-  }
-  .sidebar-item.active{background:rgba(255,255,255,0.2);color:#ffffff}
-  .sidebar-item:hover{background:rgba(255,255,255,0.12);color:#ffffff}
-  .sidebar-item-icon{font-size:15px;width:20px;text-align:center}
-  .sidebar-item-badge{margin-left:auto;background:#4ade80;color:#0a3d1f;border-radius:10px;padding:1px 7px;font-size:0.7rem;font-weight:700}
-  .sidebar-logout {
-    display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;
-    font-size:0.84rem;color:#fca5a5;cursor:pointer;transition:background 0.15s;
-    font-weight:600;border:none;background:transparent;width:100%;
-    text-align:left;font-family:'Nunito',sans-serif;margin-top:6px;
-  }
-  .sidebar-logout:hover{background:rgba(220,38,38,0.2);color:#fecaca}
-  .voice-box{margin-top:10px;padding:10px;background:rgba(0,0,0,0.18);border-radius:12px;border:1px solid rgba(255,255,255,0.15)}
-  .voice-box-title{font-size:0.76rem;font-weight:700;color:#ffffff;margin-bottom:10px}
-  .voice-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-  .voice-label{font-size:0.76rem;color:#a8d8b8;font-weight:500}
-  .toggle{width:44px;height:24px;border-radius:12px;border:none;cursor:pointer;position:relative;transition:background 0.2s;flex-shrink:0;padding:0}
-  .toggle.on{background:#4ade80}
-  .toggle.off{background:rgba(255,255,255,0.25)}
-  .toggle-knob{width:18px;height:18px;background:white;border-radius:50%;position:absolute;top:3px;transition:left 0.2s}
-  .toggle.on .toggle-knob{left:23px}
-  .toggle.off .toggle-knob{left:3px}
-  .speed-row{display:flex;flex-direction:column;gap:5px}
-  .speed-top{display:flex;justify-content:space-between}
-  .speed-val{font-size:0.74rem;color:#4ade80;font-weight:700}
-  input[type=range]{width:100%;accent-color:#4ade80;cursor:pointer}
-  .sidebar-footer{margin-top:auto;padding:14px;background:rgba(0,0,0,0.15);border-radius:12px;border:1px solid rgba(255,255,255,0.15)}
-  .sidebar-footer-title{font-size:0.76rem;font-weight:700;color:#ffffff;margin-bottom:5px}
-  .sidebar-footer-text{font-size:0.73rem;color:#a8d8b8;line-height:1.6}
-
-  /* ── MAIN ── */
-  .main{flex:1;display:flex;flex-direction:column;max-width:740px;margin:0 auto;width:100%;padding:0 28px;height:100vh;overflow:hidden}
-  .topbar{padding:20px 0 16px;border-bottom:2px solid #b8ddc8;flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
-  .topbar-title{font-size:1.05rem;font-weight:700;color:#0e4d2a}
-  .topbar-sub{font-size:0.8rem;color:#4a8a62;margin-top:2px;font-weight:500}
-  .status-badge{display:flex;align-items:center;gap:7px;background:#1a7a4a;border:2px solid #15623c;padding:7px 14px;border-radius:20px;font-size:0.78rem;color:#ffffff;font-weight:600}
-  .status-dot{width:8px;height:8px;background:#7dff9e;border-radius:50%;animation:pulse 2s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-  .speaking-badge{display:flex;align-items:center;gap:8px;background:#0a3d1f;border:2px solid #4ade80;padding:7px 14px;border-radius:20px;font-size:0.78rem;color:#4ade80;font-weight:700}
-  .wave{display:flex;gap:3px;align-items:center}
-  .wave-bar{width:3px;background:#4ade80;border-radius:2px;animation:waveBounce 0.7s infinite ease-in-out}
-  .wave-bar:nth-child(1){height:7px;animation-delay:0s}
-  .wave-bar:nth-child(2){height:13px;animation-delay:0.1s}
-  .wave-bar:nth-child(3){height:9px;animation-delay:0.2s}
-  .wave-bar:nth-child(4){height:15px;animation-delay:0.3s}
-  @keyframes waveBounce{0%,100%{transform:scaleY(0.5)}50%{transform:scaleY(1.3)}}
-
-  /* ── MESSAGES ── */
-  .messages-area{flex:1;overflow-y:auto;padding:20px 0;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:#a8d8b8 #e8f5ee}
-  .messages-area::-webkit-scrollbar{width:5px}
-  .messages-area::-webkit-scrollbar-thumb{background:#a8d8b8;border-radius:3px}
-  .empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px 0}
-  .empty-icon-wrap{width:72px;height:72px;background:#1a7a4a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:30px;box-shadow:0 4px 16px rgba(26,122,74,0.3)}
-  .empty-title{font-size:1.1rem;font-weight:700;color:#0e4d2a}
-  .empty-sub{font-size:0.85rem;color:#4a8a62;text-align:center;max-width:280px;line-height:1.7;font-weight:500}
-  .quick-btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:6px}
-  .quick-btn{padding:10px 18px;background:#1a7a4a;border:none;border-radius:22px;font-size:0.83rem;color:#ffffff;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:600;transition:background 0.15s,transform 0.1s;box-shadow:0 2px 8px rgba(26,122,74,0.25)}
-  .quick-btn:hover{background:#15623c;transform:translateY(-1px)}
-  .message-row{display:flex;align-items:flex-end;gap:12px;animation:fadeUp 0.25s ease forwards}
-  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-  .message-row.user{flex-direction:row-reverse}
-  .avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;font-weight:700}
-  .avatar.bot{background:#1a7a4a;color:white;box-shadow:0 2px 8px rgba(26,122,74,0.3)}
-  .avatar.user{background:#ffffff;border:2px solid #1a7a4a;color:#1a7a4a}
-  .bubble-wrap{display:flex;flex-direction:column;max-width:70%}
-  .message-row.user .bubble-wrap{align-items:flex-end}
-  .sender-name{font-size:0.72rem;font-weight:700;color:#4a8a62;margin-bottom:5px;letter-spacing:0.5px;text-transform:uppercase}
-  .bubble{padding:13px 17px;border-radius:18px;font-size:0.92rem;line-height:1.7;font-weight:500}
-  .bubble.bot{background:#ffffff;color:#1a3a28;border:2px solid #c8e8d4;border-bottom-left-radius:4px;box-shadow:0 2px 10px rgba(26,122,74,0.08)}
-  .bubble.user{background:#1a7a4a;color:#ffffff;border-bottom-right-radius:4px;box-shadow:0 2px 10px rgba(26,122,74,0.3)}
-  .msg-actions{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
-  .replay-btn{background:#e8f5ee;border:1.5px solid #4aaa72;border-radius:20px;padding:4px 12px;font-size:0.72rem;color:#1a7a4a;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:700;transition:background 0.15s,transform 0.1s;display:flex;align-items:center;gap:5px}
-  .replay-btn:hover{background:#c8e8d4;transform:scale(1.03)}
-  .replay-btn.playing{background:#1a7a4a;color:#ffffff;border-color:#1a7a4a}
-  .replay-btn:disabled{opacity:0.5;cursor:not-allowed;transform:none}
-  .view-card-btn{background:#fff8e1;border:1.5px solid #f5a623;border-radius:20px;padding:4px 12px;font-size:0.72rem;color:#bf6000;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:700;transition:background 0.15s,transform 0.1s;display:flex;align-items:center;gap:5px}
-  .view-card-btn:hover{background:#ffe8a0;transform:scale(1.03)}
-  .typing-indicator{display:flex;gap:5px;align-items:center;padding:4px 0}
-  .typing-dot{width:8px;height:8px;background:#1a7a4a;border-radius:50%;animation:typingBounce 1.2s infinite}
-  .typing-dot:nth-child(2){animation-delay:0.18s}
-  .typing-dot:nth-child(3){animation-delay:0.36s}
-  @keyframes typingBounce{0%,60%,100%{transform:translateY(0);opacity:0.4}30%{transform:translateY(-6px);opacity:1}}
-
-  /* ── INPUT ── */
-  .input-section{flex-shrink:0;padding:14px 0 20px;border-top:2px solid #b8ddc8}
-  .input-box{background:#ffffff;border:2.5px solid #4aaa72;border-radius:18px;display:flex;align-items:flex-end;gap:10px;padding:11px 11px 11px 18px;transition:border-color 0.2s,box-shadow 0.2s;box-shadow:0 2px 12px rgba(26,122,74,0.12)}
-  .input-box:focus-within{border-color:#1a7a4a;box-shadow:0 0 0 4px rgba(26,122,74,0.15)}
-  .chat-input{flex:1;background:transparent;border:none;outline:none;font-family:'Nunito',sans-serif;font-size:0.95rem;color:#0e4d2a;resize:none;padding:4px 0;min-height:36px;max-height:120px;line-height:1.5;font-weight:500}
-  .chat-input::placeholder{color:#7daa90;font-weight:400}
-  .send-btn{width:44px;height:44px;border-radius:14px;background:#1a7a4a;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s,transform 0.1s;box-shadow:0 2px 8px rgba(26,122,74,0.4)}
-  .send-btn:hover{background:#15623c;transform:scale(1.05)}
-  .send-btn:active{transform:scale(0.95)}
-  .send-btn:disabled{background:#a8d8b8;cursor:not-allowed;box-shadow:none}
-  .input-hint{font-size:0.72rem;color:#7daa90;margin-top:7px;text-align:center;font-weight:500}
-
-  /* ── SESSIONS PAGE ── */
-  .page-content{flex:1;overflow-y:auto;padding:20px 0;scrollbar-width:thin;scrollbar-color:#a8d8b8 #e8f5ee}
-  .page-content::-webkit-scrollbar{width:5px}
-  .page-content::-webkit-scrollbar-thumb{background:#a8d8b8;border-radius:3px}
-  .page-heading{font-family:'Playfair Display',serif;font-size:1.45rem;color:#0e4d2a;margin-bottom:5px}
-  .page-sub{font-size:0.84rem;color:#4a8a62;margin-bottom:22px;font-weight:500}
-  .page-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px}
-  .new-session-btn{background:#1a7a4a;color:#ffffff;border:none;border-radius:12px;padding:9px 18px;font-size:0.84rem;font-family:'Nunito',sans-serif;font-weight:700;cursor:pointer;transition:background 0.15s;box-shadow:0 2px 8px rgba(26,122,74,0.3)}
-  .new-session-btn:hover{background:#15623c}
-  .clear-all-btn{background:#fff0f0;color:#c53030;border:1.5px solid #fca5a5;border-radius:12px;padding:9px 16px;font-size:0.82rem;font-family:'Nunito',sans-serif;font-weight:700;cursor:pointer;transition:background 0.15s}
-  .clear-all-btn:hover{background:#ffe0e0}
-  .session-card{background:#ffffff;border:2px solid #c8e8d4;border-radius:16px;padding:18px 20px;margin-bottom:12px;transition:box-shadow 0.15s,border-color 0.15s,transform 0.1s;box-shadow:0 2px 8px rgba(26,122,74,0.07)}
-  .session-card:hover{box-shadow:0 4px 16px rgba(26,122,74,0.15);border-color:#1a7a4a;transform:translateY(-1px)}
-  .session-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
-  .session-card-title{font-size:0.92rem;font-weight:700;color:#0e4d2a}
-  .session-card-meta{font-size:0.74rem;color:#7daa90;font-weight:600;white-space:nowrap;margin-left:12px}
-  .session-card-preview{font-size:0.83rem;color:#3a6a4a;line-height:1.6;font-weight:500}
-  .session-card-footer{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
-  .session-tag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700}
-  .tag-anxiety{background:#fff3e0;color:#bf4800;border:1.5px solid #ffaa60}
-  .tag-stress{background:#e3f2fd;color:#0d47a1;border:1.5px solid #90caf9}
-  .tag-general{background:#e8f5ee;color:#0e4d2a;border:1.5px solid #4aaa72}
-  .session-del-btn{background:transparent;border:1.5px solid #fca5a5;border-radius:10px;padding:4px 10px;font-size:0.72rem;color:#c53030;cursor:pointer;font-family:'Nunito',sans-serif;font-weight:700;transition:background 0.15s}
-  .session-del-btn:hover{background:#fff0f0}
-  .empty-sessions{text-align:center;padding:60px 0;color:#4a8a62}
-  .empty-sessions-icon{font-size:48px;margin-bottom:16px}
-  .empty-sessions-text{font-size:0.9rem;line-height:1.7;font-weight:500}
-
-  /* ── RESOURCES ── */
-  .resources-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px}
-  .resource-card{background:#ffffff;border:2px solid #c8e8d4;border-radius:16px;padding:20px;transition:box-shadow 0.15s,transform 0.1s;box-shadow:0 2px 8px rgba(26,122,74,0.07)}
-  .resource-card:hover{box-shadow:0 4px 16px rgba(26,122,74,0.15);transform:translateY(-2px)}
-  .resource-icon{font-size:26px;margin-bottom:10px}
-  .resource-title{font-size:0.92rem;font-weight:700;color:#0e4d2a;margin-bottom:7px}
-  .resource-desc{font-size:0.81rem;color:#3a6a4a;line-height:1.7;font-weight:500}
-  .tip-section{background:#ffffff;border:2px solid #c8e8d4;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 8px rgba(26,122,74,0.07)}
-  .tip-section-title{font-size:0.92rem;font-weight:700;color:#0e4d2a;margin-bottom:14px}
-  .tip-item{display:flex;gap:13px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #e8f5ee}
-  .tip-item:last-child{border-bottom:none;padding-bottom:0}
-  .tip-num{width:26px;height:26px;background:#1a7a4a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:700;color:#ffffff;flex-shrink:0}
-  .tip-text{font-size:0.84rem;color:#1a3a28;line-height:1.7;font-weight:500;padding-top:3px}
-  .hotline-card{background:#fff8e1;border:2px solid #ffcc02;border-radius:16px;padding:18px 20px;display:flex;gap:14px;align-items:flex-start;box-shadow:0 2px 8px rgba(255,160,0,0.1)}
-  .hotline-icon{font-size:24px;flex-shrink:0;margin-top:2px}
-  .hotline-title{font-size:0.92rem;font-weight:700;color:#bf4800;margin-bottom:5px}
-  .hotline-text{font-size:0.82rem;color:#5a3a00;line-height:1.7;font-weight:500}
-
-  /* ── THERAPY POPUP ── */
-  .popup-overlay{position:fixed;inset:0;background:rgba(10,40,20,0.55);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;animation:overlayIn 0.2s ease}
-  @keyframes overlayIn{from{opacity:0}to{opacity:1}}
-  .popup-card{background:#ffffff;border-radius:24px;width:100%;max-width:520px;max-height:85vh;overflow-y:auto;box-shadow:0 24px 60px rgba(10,40,20,0.3);border:2px solid #c8e8d4;animation:cardIn 0.28s cubic-bezier(0.34,1.56,0.64,1);scrollbar-width:thin;scrollbar-color:#a8d8b8 #f0faf4}
-  @keyframes cardIn{from{opacity:0;transform:scale(0.88) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}
-  .popup-header{padding:26px 26px 18px;background:linear-gradient(135deg,#1a7a4a 0%,#0e4d2a 100%);border-radius:22px 22px 0 0;position:relative}
-  .popup-tag{font-size:0.68rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#7dffad;margin-bottom:7px}
-  .popup-title{font-family:'Playfair Display',serif;font-size:1.25rem;color:#ffffff;line-height:1.4;padding-right:38px}
-  .popup-close{position:absolute;top:16px;right:16px;width:34px;height:34px;background:rgba(255,255,255,0.15);border:none;border-radius:50%;color:#ffffff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.15s;font-family:'Nunito',sans-serif;font-weight:700}
-  .popup-close:hover{background:rgba(255,255,255,0.3)}
-  .popup-body{padding:22px 26px 26px}
-  .popup-steps{display:flex;flex-direction:column;gap:11px;margin-bottom:22px}
-  .popup-step{display:flex;gap:13px;align-items:flex-start;padding:13px 15px;background:#f0faf4;border-radius:13px;border:1.5px solid #d4eed8;transition:border-color 0.15s,background 0.15s}
-  .popup-step:hover{border-color:#1a7a4a;background:#e8f5ee}
-  .popup-step-num{width:26px;height:26px;background:#1a7a4a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:700;color:#ffffff;flex-shrink:0}
-  .popup-step-text{font-size:0.87rem;color:#1a3a28;line-height:1.7;font-weight:500;padding-top:2px}
-  .popup-full-text{font-size:0.87rem;color:#1a3a28;line-height:1.8;font-weight:500;margin-bottom:22px;white-space:pre-wrap}
-  .popup-actions{display:flex;gap:11px;flex-wrap:wrap}
-  .popup-btn-speak{flex:1;min-width:140px;padding:12px 18px;background:#1a7a4a;border:none;border-radius:13px;font-size:0.87rem;font-family:'Nunito',sans-serif;font-weight:700;color:#ffffff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background 0.15s,transform 0.1s;box-shadow:0 3px 12px rgba(26,122,74,0.35)}
-  .popup-btn-speak:hover{background:#15623c;transform:translateY(-1px)}
-  .popup-btn-speak.speaking{background:#0a3d1f;border:2px solid #4ade80;color:#4ade80}
-  .popup-btn-speak:disabled{background:#a8d8b8;cursor:not-allowed;box-shadow:none;transform:none}
-  .popup-btn-close{flex:1;min-width:110px;padding:12px 18px;background:#f0faf4;border:2px solid #c8e8d4;border-radius:13px;font-size:0.87rem;font-family:'Nunito',sans-serif;font-weight:700;color:#1a7a4a;cursor:pointer;transition:background 0.15s,transform 0.1s}
-  .popup-btn-close:hover{background:#e0f2e8;transform:translateY(-1px)}
-
-  /* ── CONFIRM DIALOG ── */
-  .confirm-overlay{position:fixed;inset:0;background:rgba(10,40,20,0.5);backdrop-filter:blur(3px);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px;animation:overlayIn 0.15s ease}
-  .confirm-card{background:#ffffff;border-radius:20px;width:100%;max-width:360px;padding:28px;box-shadow:0 20px 50px rgba(10,40,20,0.25);animation:cardIn 0.2s cubic-bezier(0.34,1.4,0.64,1)}
-  .confirm-icon{font-size:36px;text-align:center;margin-bottom:14px}
-  .confirm-title{font-size:1.05rem;font-weight:700;color:#0e4d2a;text-align:center;margin-bottom:8px}
-  .confirm-text{font-size:0.85rem;color:#4a6a52;text-align:center;line-height:1.6;font-weight:500;margin-bottom:22px}
-  .confirm-actions{display:flex;gap:10px}
-  .confirm-cancel{flex:1;padding:11px;background:#f0faf4;border:2px solid #c8e8d4;border-radius:12px;font-size:0.88rem;font-family:'Nunito',sans-serif;font-weight:700;color:#1a7a4a;cursor:pointer;transition:background 0.15s}
-  .confirm-cancel:hover{background:#e0f2e8}
-  .confirm-ok{flex:1;padding:11px;background:#dc2626;border:none;border-radius:12px;font-size:0.88rem;font-family:'Nunito',sans-serif;font-weight:700;color:#ffffff;cursor:pointer;transition:background 0.15s}
-  .confirm-ok:hover{background:#b91c1c}
-
-  @media(max-width:640px){
-    .sidebar{display:none}
-    .main{padding:0 16px}
-    .resources-grid{grid-template-columns:1fr}
-    .popup-card{max-height:90vh}
-  }
-`;
-
-const RESOURCES = [
+const RESOURCES_EN = [
   { icon: "🧘", title: "Breathing Exercises", desc: "4-7-8 breathing: inhale 4s, hold 7s, exhale 8s. Reduces anxiety within minutes and calms your nervous system." },
   { icon: "📓", title: "Journaling", desc: "Writing 3 things you are grateful for daily reduces stress by up to 25% according to research." },
   { icon: "🚶", title: "Physical Activity", desc: "Even a 20-minute walk releases endorphins that improve mood and significantly reduce anxiety." },
@@ -367,7 +294,17 @@ const RESOURCES = [
   { icon: "🌿", title: "Mindfulness", desc: "5 minutes of mindful breathing each morning sets a calm, focused tone for the entire day." },
   { icon: "👥", title: "Social Support", desc: "Talking to a trusted friend or family member is one of the most effective stress relievers available." },
 ];
-const DAILY_TIPS = [
+
+const RESOURCES_UR = [
+  { icon: "🧘", title: "سانس کی مشقیں", desc: "4-7-8 سانس: 4 گنتی میں سانس لیں، 7 گنتی روکیں، 8 گنتی میں چھوڑیں۔ گھبراہٹ فوری کم ہوتی ہے۔" },
+  { icon: "📓", title: "ڈائری لکھنا", desc: "روزانہ 3 شکرگزاری کی باتیں لکھنا تناؤ 25 فیصد تک کم کر سکتا ہے۔" },
+  { icon: "🚶", title: "جسمانی سرگرمی", desc: "20 منٹ کی چہل قدمی بھی موڈ بہتر کرنے والے ہارمون پیدا کرتی ہے۔" },
+  { icon: "😴", title: "نیند کی عادات", desc: "سونے کا وقت مقرر رکھیں۔ سونے سے ایک گھنٹہ پہلے اسکرین سے دور رہیں۔" },
+  { icon: "🌿", title: "ذہن سازی", desc: "صبح 5 منٹ آہستہ سانس لینا پورے دن کو پرسکون بنا سکتا ہے۔" },
+  { icon: "👥", title: "سماجی معاونت", desc: "کسی قابل اعتماد دوست یا خاندانی فرد سے بات کرنا تناؤ کم کرنے کا بہترین طریقہ ہے۔" },
+];
+
+const DAILY_TIPS_EN = [
   "Drink at least 8 glasses of water — dehydration makes anxiety worse.",
   "Limit caffeine to 1-2 cups per day, especially if you feel anxious.",
   "Take a 5-minute break every hour when studying or working.",
@@ -376,21 +313,52 @@ const DAILY_TIPS = [
   "Reach out to someone you trust if you are struggling — you are not alone.",
 ];
 
+const DAILY_TIPS_UR = [
+  "روزانہ کم از کم 8 گلاس پانی پیئں — پانی کی کمی گھبراہٹ بڑھاتی ہے۔",
+  "کیفین کو روزانہ 1-2 کپ تک محدود رکھیں، خاص طور پر اگر گھبراہٹ ہو۔",
+  "پڑھائی یا کام کے دوران ہر گھنٹے میں 5 منٹ کا وقفہ لیں۔",
+  "جب دباؤ ہو تو 5-4-3-2-1 کی زمینی تکنیک آزمائیں۔",
+  "آج کے لیے ایک چھوٹا ہدف بنائیں اور اسے پورا کر کے خوشی منائیں۔",
+  "اگر مشکل ہو تو کسی قابل اعتماد شخص سے بات کریں — آپ اکیلے نہیں ہیں۔",
+];
+
+// ── PPO helper ──────────────────────────────────────────────────
+const levelToNum = (level) =>
+  level === "high" ? 3 : level === "medium" ? 2 : 1;
+
+// ════════════════════════════════════════════════════════════════
+//  TOAST SYSTEM
+// ════════════════════════════════════════════════════════════════
+function ToastContainer({ toasts }) {
+  return (
+    <div className="toast-container">
+      {toasts.map(t => <div key={t.id} className="toast">{t.msg}</div>)}
+    </div>
+  );
+}
+
+function useToast() {
+  const [toasts, setToasts] = useState([]);
+  const show = useCallback((msg) => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2500);
+  }, []);
+  return { toasts, show };
+}
+
 // ════════════════════════════════════════════════════════════════
 //  AUTH SCREEN
 // ════════════════════════════════════════════════════════════════
-function AuthScreen({ onLogin }) {
+function AuthScreen({ onLogin, lang }) {
+  const t = UI[lang];
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [globalError, setGlobalError] = useState("");
 
-  const setField = (k, v) => {
-    setForm(f => ({ ...f, [k]: v }));
-    setErrors(e => ({ ...e, [k]: "" }));
-    setGlobalError("");
-  };
+  const setField = (k, v) => { setForm(f => ({ ...f, [k]: v })); setErrors(e => ({ ...e, [k]: "" })); setGlobalError(""); };
 
   const validate = () => {
     const e = {};
@@ -415,13 +383,13 @@ function AuthScreen({ onLogin }) {
         const user = { name: form.name.trim(), email, password: form.password, createdAt: Date.now() };
         users[email] = user;
         local.set("sc_users", users);
-        session.set("sc_login", email);
+        session.set("sc_current_user", user);
         onLogin(user);
       } else {
         const user = users[email];
         if (!user) { setGlobalError("No account found with this email."); setLoading(false); return; }
         if (user.password !== form.password) { setErrors({ password: "Incorrect password." }); setLoading(false); return; }
-        session.set("sc_login", email);
+        session.set("sc_current_user", user);
         onLogin(user);
       }
       setLoading(false);
@@ -436,38 +404,35 @@ function AuthScreen({ onLogin }) {
       <div className="auth-card">
         <div className="auth-header">
           <div className="auth-logo">🌿</div>
-          <div className="auth-brand">SentiCare</div>
-          <div className="auth-tagline">Your personal mental health companion</div>
+          <div className="auth-brand">{t.appName}</div>
+          <div className="auth-tagline">{t.tagline}</div>
         </div>
         <div className="auth-body">
-          <div className="auth-info-box">
-            <span className="auth-info-icon">ℹ️</span>
-            <span>You will need to <strong>sign in each time</strong> you open a new browser session. Your account and session history are always saved.</span>
-          </div>
-          <div className="auth-title">{mode === "login" ? "Welcome back 👋" : "Create your account"}</div>
+          <div className="auth-info-box"><span className="auth-info-icon">ℹ️</span><span>{t.info_box}</span></div>
+          <div className="auth-title">{mode === "login" ? t.login_title : t.signup_title}</div>
           {mode === "signup" && (
             <div className="auth-field">
-              <label className="auth-label">Full Name</label>
-              <input className={`auth-input ${errors.name ? "error" : ""}`} placeholder="Wajeeha Ijaz"
+              <label className="auth-label">{t.name_label}</label>
+              <input className={`auth-input ${errors.name ? "error" : ""}`} placeholder="Your name"
                 value={form.name} onChange={e => setField("name", e.target.value)} onKeyDown={handleKey} />
               {errors.name && <div className="auth-error">{errors.name}</div>}
             </div>
           )}
           <div className="auth-field">
-            <label className="auth-label">Email Address</label>
+            <label className="auth-label">{t.email_label}</label>
             <input className={`auth-input ${errors.email ? "error" : ""}`} type="email" placeholder="you@example.com"
               value={form.email} onChange={e => setField("email", e.target.value)} onKeyDown={handleKey} />
             {errors.email && <div className="auth-error">{errors.email}</div>}
           </div>
           <div className="auth-field">
-            <label className="auth-label">Password</label>
+            <label className="auth-label">{t.pass_label}</label>
             <input className={`auth-input ${errors.password ? "error" : ""}`} type="password" placeholder="••••••••"
               value={form.password} onChange={e => setField("password", e.target.value)} onKeyDown={handleKey} />
             {errors.password && <div className="auth-error">{errors.password}</div>}
           </div>
           {mode === "signup" && (
             <div className="auth-field">
-              <label className="auth-label">Confirm Password</label>
+              <label className="auth-label">{t.confirm_label}</label>
               <input className={`auth-input ${errors.confirm ? "error" : ""}`} type="password" placeholder="••••••••"
                 value={form.confirm} onChange={e => setField("confirm", e.target.value)} onKeyDown={handleKey} />
               {errors.confirm && <div className="auth-error">{errors.confirm}</div>}
@@ -475,17 +440,17 @@ function AuthScreen({ onLogin }) {
           )}
           {globalError && <div className="auth-error" style={{ marginBottom: 12 }}>{globalError}</div>}
           <button className="auth-btn" onClick={handleSubmit} disabled={loading}>
-            {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
+            {loading ? t.wait_btn : mode === "login" ? t.signin_btn : t.signup_btn}
           </button>
           <div className="auth-divider">
             <div className="auth-divider-line" />
-            <div className="auth-divider-text">{mode === "login" ? "NEW HERE?" : "HAVE AN ACCOUNT?"}</div>
+            <div className="auth-divider-text">{mode === "login" ? t.new_here : t.have_acct}</div>
             <div className="auth-divider-line" />
           </div>
           <div className="auth-switch">
             {mode === "login"
-              ? <>Don't have an account? <span className="auth-switch-link" onClick={() => switchMode("signup")}>Sign Up</span></>
-              : <>Already have an account? <span className="auth-switch-link" onClick={() => switchMode("login")}>Sign In</span></>
+              ? <>{t.no_account} <span className="auth-switch-link" onClick={() => switchMode("signup")}>{t.sign_up_link}</span></>
+              : <>{t.have_account} <span className="auth-switch-link" onClick={() => switchMode("login")}>{t.sign_in_link}</span></>
             }
           </div>
         </div>
@@ -497,7 +462,8 @@ function AuthScreen({ onLogin }) {
 // ════════════════════════════════════════════════════════════════
 //  CONFIRM DIALOG
 // ════════════════════════════════════════════════════════════════
-function ConfirmDialog({ icon, title, text, onConfirm, onCancel }) {
+function ConfirmDialog({ icon, title, text, onConfirm, onCancel, lang }) {
+  const t = UI[lang];
   return (
     <div className="confirm-overlay" onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
       <div className="confirm-card">
@@ -505,10 +471,156 @@ function ConfirmDialog({ icon, title, text, onConfirm, onCancel }) {
         <div className="confirm-title">{title}</div>
         <div className="confirm-text">{text}</div>
         <div className="confirm-actions">
-          <button className="confirm-cancel" onClick={onCancel}>Cancel</button>
-          <button className="confirm-ok" onClick={onConfirm}>Delete</button>
+          <button className="confirm-cancel" onClick={onCancel}>{t.confirm_cancel}</button>
+          <button className="confirm-ok" onClick={onConfirm}>{t.confirm_delete}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+//  SIDEBAR CONTENT
+// ════════════════════════════════════════════════════════════════
+function SidebarContent({ user, page, setPage, sessions, lang, voiceOn, setVoiceOn, speechRate, setSpeechRate, onLogout, todayTip, onClose }) {
+  const t = UI[lang];
+  const initials = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+  const nav = (p) => { setPage(p); onClose && onClose(); };
+
+  return (
+    <>
+      <div className="logo-area">
+        <div className="logo-icon">🌿</div>
+        <div className="logo-text">SentiCare</div>
+      </div>
+      <div className="user-badge">
+        <div className="user-avatar">{initials}</div>
+        <div className="user-info">
+          <div className="user-name">{user.name}</div>
+          <div className="user-email">{user.email}</div>
+        </div>
+      </div>
+
+      <div className="sidebar-label">Navigation</div>
+      <button className={`sidebar-item ${page === "chat" ? "active" : ""}`} onClick={() => nav("chat")}>
+        <span className="sidebar-item-icon">💬</span> {t.nav_chat}
+      </button>
+      <button className={`sidebar-item ${page === "sessions" ? "active" : ""}`} onClick={() => nav("sessions")}>
+        <span className="sidebar-item-icon">🗂️</span> {t.nav_sessions}
+        {sessions.length > 0 && <span className="sidebar-item-badge">{sessions.length}</span>}
+      </button>
+      <button className={`sidebar-item ${page === "resources" ? "active" : ""}`} onClick={() => nav("resources")}>
+        <span className="sidebar-item-icon">📚</span> {t.nav_resources}
+      </button>
+      <button className="sidebar-logout" onClick={onLogout}>
+        <span style={{ fontSize: 15 }}>🚪</span> {t.nav_signout}
+      </button>
+
+      <div className="voice-box" style={{ marginTop: 14 }}>
+        <div className="voice-box-title">{t.voice_settings}</div>
+        <div className="voice-row">
+          <span className="voice-label">{voiceOn ? t.voice_on : t.voice_off}</span>
+          <button className={`toggle ${voiceOn ? "on" : "off"}`} onClick={() => { stopAudio(); setVoiceOn(v => !v); }}>
+            <div className="toggle-knob" />
+          </button>
+        </div>
+        {voiceOn && (
+          <div className="speed-row">
+            <div className="speed-top">
+              <span className="voice-label">{t.speed}</span>
+              <span className="speed-val">{speechRate.toFixed(1)}x</span>
+            </div>
+            <input type="range" min="0.5" max="2" step="0.1" value={speechRate}
+              onChange={e => { const r = parseFloat(e.target.value); setSpeechRate(r); sharedAudio.playbackRate = r; }} />
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar-footer">
+        <div className="sidebar-footer-title">{t.tip_title}</div>
+        <div className="sidebar-footer-text">{todayTip}</div>
+      </div>
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+//  FEATURE 5 — EMOTION TREND CHART
+// ════════════════════════════════════════════════════════════════
+function EmotionTrendChart({ sessions, lang }) {
+  const t = UI[lang];
+
+  const chartData = [...sessions]
+    .reverse()
+    .map(s => ({
+      date: s.date,
+      level: levelToNum(s.level || "medium"),
+      condition: s.condition,
+      levelLabel: s.level || "medium",
+    }));
+
+  const shouldEscalate =
+    sessions.length >= 3 &&
+    sessions.slice(0, 3).every(s => (s.level || "medium") === "high");
+
+  const CustomDot = (props) => {
+    const { cx, cy, payload } = props;
+    const color =
+      payload.levelLabel === "high" ? "#dc2626" :
+      payload.levelLabel === "medium" ? "#f5a623" : "#4ade80";
+    return <circle cx={cx} cy={cy} r={6} fill={color} stroke="#fff" strokeWidth={2} />;
+  };
+
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0].payload;
+    const levelColors = { high: "#dc2626", medium: "#f5a623", low: "#4ade80" };
+    const levelLabels = { high: t.trend_high, medium: t.trend_med, low: t.trend_low };
+    return (
+      <div style={{
+        background: "#fff", border: "1.5px solid #c8e8d4", borderRadius: 10,
+        padding: "8px 14px", fontSize: "0.8rem", fontFamily: "'Nunito', sans-serif",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+      }}>
+        <div style={{ fontWeight: 700, color: "#0e4d2a", marginBottom: 3 }}>{d.date}</div>
+        <div style={{ color: "#4a8a62" }}>{d.condition}</div>
+        <div style={{ color: levelColors[d.levelLabel], fontWeight: 700, marginTop: 3 }}>
+          {levelLabels[d.levelLabel]}
+        </div>
+      </div>
+    );
+  };
+
+  if (sessions.length < 2) return null;
+
+  return (
+    <div className="trend-card">
+      <div className="trend-card-title">{t.trend_title}</div>
+      <div className="trend-legend">
+        <div className="trend-legend-item"><div className="legend-dot" style={{ background: "#4ade80" }} />{t.trend_low}</div>
+        <div className="trend-legend-item"><div className="legend-dot" style={{ background: "#f5a623" }} />{t.trend_med}</div>
+        <div className="trend-legend-item"><div className="legend-dot" style={{ background: "#dc2626" }} />{t.trend_high}</div>
+      </div>
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={chartData} margin={{ top: 8, right: 16, left: -20, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e8f5ee" />
+          <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#4a8a62", fontFamily: "'Nunito', sans-serif" }} tickLine={false} />
+          <YAxis
+            domain={[0.5, 3.5]} ticks={[1, 2, 3]}
+            tickFormatter={v => ({ 1: t.trend_low, 2: t.trend_med, 3: t.trend_high }[v] || "")}
+            tick={{ fontSize: 11, fill: "#4a8a62", fontFamily: "'Nunito', sans-serif" }} tickLine={false}
+          />
+          <Tooltip content={<CustomTooltip />} />
+          <ReferenceLine y={3} stroke="#dc2626" strokeDasharray="5 3" strokeOpacity={0.5} />
+          <Line type="monotone" dataKey="level" stroke="#1a7a4a" strokeWidth={2.5} dot={<CustomDot />} activeDot={{ r: 8, fill: "#1a7a4a" }} />
+        </LineChart>
+      </ResponsiveContainer>
+      {shouldEscalate && (
+        <div className="escalate-banner">
+          <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>⚠️</span>
+          <span>{t.escalate_msg}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -517,39 +629,42 @@ function ConfirmDialog({ icon, title, text, onConfirm, onCancel }) {
 //  ROOT
 // ════════════════════════════════════════════════════════════════
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authChecked, setAuthChecked] = useState(false);
+  const [currentUser, setCurrentUser] = useState(() => session.get("sc_current_user") || null);
+  const [lang, setLang] = useState(local.get("sc_lang") || "en");
 
-  useEffect(() => {
-    const email = session.get("sc_login");
-    if (email) {
-      const users = local.get("sc_users") || {};
-      if (users[email]) setCurrentUser(users[email]);
-    }
-    setAuthChecked(true);
-    return () => stopAudio();
-  }, []);
+  useEffect(() => { return () => stopAudio(); }, []);
+
+  const toggleLang = () => {
+    const next = lang === "en" ? "ur" : "en";
+    setLang(next);
+    local.set("sc_lang", next);
+  };
 
   const handleLogin = (user) => setCurrentUser(user);
   const handleLogout = () => {
     stopAudio();
-    session.del("sc_login");
+    session.del("sc_current_user");
     setCurrentUser(null);
   };
 
-  if (!authChecked) return null;
-  if (!currentUser) return <><style>{styles}</style><AuthScreen onLogin={handleLogin} /></>;
-  return <><style>{styles}</style><MainApp user={currentUser} onLogout={handleLogout} /></>;
+  if (!currentUser) return <AuthScreen onLogin={handleLogin} lang={lang} />;
+  return <MainApp user={currentUser} onLogout={handleLogout} lang={lang} toggleLang={toggleLang} />;
 }
 
 // ════════════════════════════════════════════════════════════════
-//  MAIN APP (authenticated)
+//  MAIN APP
 // ════════════════════════════════════════════════════════════════
-function MainApp({ user, onLogout }) {
+function MainApp({ user, onLogout, lang, toggleLang }) {
+  const t = UI[lang];
+  const isRTL = lang === "ur";
+  const RESOURCES = lang === "ur" ? RESOURCES_UR : RESOURCES_EN;
+  const DAILY_TIPS = lang === "ur" ? DAILY_TIPS_UR : DAILY_TIPS_EN;
+
   const [page, setPage] = useState("chat");
   const [sessionId] = useState(() => crypto.randomUUID());
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [inputError, setInputError] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const [speechRate, setSpeechRate] = useState(1.0);
@@ -560,95 +675,101 @@ function MainApp({ user, onLogout }) {
   const [popupTtsLoading, setPopupTtsLoading] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [confirm, setConfirm] = useState(null);
+  const [currentOptions, setCurrentOptions] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { toasts, show: showToast } = useToast();
+
+  // ── FEATURE 4: PPO STATE ──────────────────────────────────────
+  const [feedback, setFeedback] = useState({});
+  const [thumbsDownCount, setThumbsDownCount] = useState(0);
+  const [policyMode, setPolicyMode] = useState("default");
+
+  // ── VOICE CHECK-IN STATE ──────────────────────────────────────
+  const [voiceCheckInDone, setVoiceCheckInDone] = useState(false);
+
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const sessionSaved = useRef(false);
 
   const sessionsKey = `sc_sessions_${user.email}`;
+  const charCount = input.length;
+  const charOver = charCount > MAX_INPUT_CHARS;
+  const charWarn = charCount > MAX_INPUT_CHARS * 0.85;
 
-  useEffect(() => {
-    setSessions(local.get(sessionsKey) || []);
-    return () => stopAudio();
-  }, []);
+  useEffect(() => { setSessions(local.get(sessionsKey) || []); return () => stopAudio(); }, []);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isTyping]);
+  useEffect(() => { if (inputError) setInputError(""); }, [input]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+  // ── FEATURE 4: PPO FEEDBACK HANDLER ──────────────────────────
+  const handleFeedback = useCallback((msgIdx, type) => {
+    if (feedback[msgIdx]) return;
+    setFeedback(prev => ({ ...prev, [msgIdx]: type }));
+    const rewardsKey = `sc_rewards_${user.email}`;
+    const existingRewards = local.get(rewardsKey) || [];
+    existingRewards.push({
+      sessionId, msgIdx, type,
+      reward: type === "up" ? 1 : -1,
+      timestamp: Date.now(),
+    });
+    local.set(rewardsKey, existingRewards);
+    if (type === "down") {
+      const newCount = thumbsDownCount + 1;
+      setThumbsDownCount(newCount);
+      if (newCount >= 3) { setPolicyMode("alternate"); showToast(t.ppo_switching); }
+    }
+  }, [feedback, thumbsDownCount, sessionId, user.email, t]);
 
-  // ── Auto-save session ───────────────────────────────────────────
+  // ── Auto-save session ─────────────────────────────────────────
   useEffect(() => {
     if (sessionSaved.current) return;
     const lastBot = [...messages].reverse().find(m => m.sender === "bot");
     if (!lastBot) return;
-    const t = lastBot.text.toLowerCase();
-    const hasTherapy = ["steps:", "exercise:", "technique:", "breathing", "grounding", "cbt", "you are not alone"].some(k => t.includes(k));
-    if (!hasTherapy || messages.length < 4) return;
+    const txt = lastBot.text.toLowerCase();
+    const done = ["steps:", "اقدامات:", "you are not alone", "آپ اکیلے نہیں"].some(k => txt.includes(k));
+    if (!done || messages.length < 4) return;
+    const alreadySaved = local.get(sessionsKey) || [];
+    if (alreadySaved.find(s => s.id === sessionId)) return;
     sessionSaved.current = true;
-    const condition = t.includes("anxiet") ? "anxiety" : t.includes("stress") ? "stress" : "general";
-    const newSession = {
+    const condition = txt.includes("anxiet") || txt.includes("گھبراہٹ") ? "anxiety"
+      : txt.includes("stress") || txt.includes("دباؤ") ? "stress" : "general";
+    let level = "medium";
+    if (txt.includes("high") || txt.includes("زیادہ")) level = "high";
+    else if (txt.includes("low") || txt.includes("کم")) level = "low";
+    const newS = {
       id: sessionId,
       date: new Date().toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" }),
       time: new Date().toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" }),
       preview: lastBot.text.slice(0, 120) + "…",
-      condition,
+      condition, level,
       messageCount: messages.length,
     };
-    setSessions(prev => {
-      if (prev.find(s => s.id === sessionId)) return prev;
-      const updated = [newSession, ...prev];
-      local.set(sessionsKey, updated);
-      return updated;
-    });
+    const updated = [newS, ...alreadySaved];
+    local.set(sessionsKey, updated);
+    setSessions(updated);
+    showToast(t.toast_session);
   }, [messages]);
 
-  // ── TTS helpers ─────────────────────────────────────────────────
+  // ── TTS ───────────────────────────────────────────────────────
   const speakMessage = useCallback((text, idx) => {
-    // Show loading state immediately so the user gets feedback right away
     setTtsLoading(true);
     setSpeakingIdx(null);
-
-    playTTS(
-      text,
-      speechRate,
-      () => {
-        // onStart — fires on canplay, audio has begun
-        setTtsLoading(false);
-        setSpeakingIdx(idx);
-      },
-      () => {
-        // onEnd
-        setSpeakingIdx(null);
-        setTtsLoading(false);
-      },
-      () => {
-        // onError
-        setSpeakingIdx(null);
-        setTtsLoading(false);
-      },
+    playTTS(text, speechRate, lang,
+      () => { setTtsLoading(false); setSpeakingIdx(idx); },
+      () => { setSpeakingIdx(null); setTtsLoading(false); },
+      () => { setSpeakingIdx(null); setTtsLoading(false); },
     );
-  }, [speechRate]);
+  }, [speechRate, lang]);
 
   const handleReplay = (text, idx) => {
-    if (speakingIdx === idx) {
-      stopAudio();
-      setSpeakingIdx(null);
-      setTtsLoading(false);
-    } else {
-      speakMessage(text, idx);
-    }
+    if (speakingIdx === idx) { stopAudio(); setSpeakingIdx(null); setTtsLoading(false); }
+    else speakMessage(text, idx);
   };
 
   const handlePopupSpeak = (text) => {
-    if (popupSpeaking) {
-      stopAudio();
-      setPopupSpeaking(false);
-      setPopupTtsLoading(false);
-    } else {
+    if (popupSpeaking) { stopAudio(); setPopupSpeaking(false); setPopupTtsLoading(false); }
+    else {
       setPopupTtsLoading(true);
-      setPopupSpeaking(false);
-      playTTS(
-        text,
-        speechRate,
+      playTTS(text, speechRate, lang,
         () => { setPopupTtsLoading(false); setPopupSpeaking(true); },
         () => { setPopupSpeaking(false); setPopupTtsLoading(false); },
         () => { setPopupSpeaking(false); setPopupTtsLoading(false); },
@@ -659,185 +780,253 @@ function MainApp({ user, onLogout }) {
   const openPopup = (text) => setPopup({ text, card: parseTherapyCard(text) });
   const closePopup = () => { stopAudio(); setPopupSpeaking(false); setPopupTtsLoading(false); setPopup(null); };
 
-  // ── Send message ────────────────────────────────────────────────
+  // ── Core send ─────────────────────────────────────────────────
   const sendMessage = async (text) => {
     setIsTyping(true);
-    stopAudio();
-    setSpeakingIdx(null);
-    setTtsLoading(false);
+    setCurrentOptions(null);
+    stopAudio(); setSpeakingIdx(null); setTtsLoading(false);
+
     try {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, input: text }),
+        body: JSON.stringify({ session_id: sessionId, input: text, lang, policy_mode: policyMode }),
       });
       const data = await res.json();
-      setMessages(prev => {
-        const newIdx = prev.length;
-        // Start TTS immediately — no more waiting for a blob
-        if (voiceOn) speakMessage(data.message, newIdx);
-        if (isTherapyMessage(data.message)) setTimeout(() => openPopup(data.message), 400);
-        return [...prev, { sender: "bot", text: data.message }];
-      });
+      const firstOptions = data.options || null;
+
+      let questionSpeakFn = null;
+
+      const fetchFirstQuestion = async () => {
+        try {
+          const res2 = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: sessionId, input: "", lang, policy_mode: policyMode }),
+          });
+          const data2 = await res2.json();
+          const q1opts = data2.options || null;
+          setCurrentOptions(q1opts);
+          setMessages(prev => {
+            const idx2 = prev.length;
+            questionSpeakFn = () => { if (voiceOn) speakMessage(data2.message, idx2); };
+            return [...prev, { sender: "bot", text: data2.message, options: q1opts }];
+          });
+        } catch { /* silent */ }
+      };
+
       if (data.stage === "pre_screening") {
-        const res2 = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: sessionId, input: "" }),
-        });
-        const data2 = await res2.json();
+        let greetingIdx;
         setMessages(prev => {
-          const idx2 = prev.length;
-          if (voiceOn) setTimeout(() => speakMessage(data2.message, idx2), 600);
-          if (isTherapyMessage(data2.message)) setTimeout(() => openPopup(data2.message), 1000);
-          return [...prev, { sender: "bot", text: data2.message }];
+          greetingIdx = prev.length;
+          return [...prev, { sender: "bot", text: data.message, options: null }];
         });
+
+        if (voiceOn) {
+          const questionPromise = fetchFirstQuestion();
+          setTtsLoading(true);
+          setSpeakingIdx(null);
+          const clean = data.message
+            .replace(/[\u{1F300}-\u{1FFFF}]/gu, "")
+            .replace(/[🔍💚📋✅🌱🟠🔵🟢]/g, "")
+            .replace(/\*+/g, " ")
+            .replace(/\n+/g, ". ")
+            .trim();
+          if (clean) {
+            const params = new URLSearchParams({ text: clean, lang });
+            sharedAudio.src = `${TTS_URL}?${params.toString()}`;
+            sharedAudio.playbackRate = Math.min(Math.max(speechRate, 0.5), 2);
+            sharedAudio.oncanplay = () => { setTtsLoading(false); setSpeakingIdx(greetingIdx); };
+            sharedAudio.onended = async () => {
+              setSpeakingIdx(null); setTtsLoading(false);
+              sharedAudio.onended = null; sharedAudio.onerror = null;
+              await questionPromise;
+              if (questionSpeakFn) questionSpeakFn();
+            };
+            sharedAudio.onerror = async () => {
+              setSpeakingIdx(null); setTtsLoading(false);
+              sharedAudio.onended = null; sharedAudio.onerror = null;
+              await questionPromise;
+              if (questionSpeakFn) questionSpeakFn();
+            };
+            sharedAudio.play().catch(async () => {
+              setSpeakingIdx(null); setTtsLoading(false);
+              sharedAudio.onended = null; sharedAudio.onerror = null;
+              await questionPromise;
+              if (questionSpeakFn) questionSpeakFn();
+            });
+          } else {
+            await fetchFirstQuestion();
+          }
+        } else {
+          await fetchFirstQuestion();
+        }
+
+      } else {
+        setMessages(prev => {
+          const newIdx = prev.length;
+          if (voiceOn) speakMessage(data.message, newIdx);
+          if (isTherapyMessage(data.message)) setTimeout(() => openPopup(data.message), 400);
+          return [...prev, { sender: "bot", text: data.message, options: firstOptions }];
+        });
+        setCurrentOptions(firstOptions);
       }
+
     } catch {
       setMessages(prev => [...prev, { sender: "bot", text: "Unable to connect. Please make sure the backend is running on port 5000." }]);
+      setCurrentOptions(null);
     } finally {
       setIsTyping(false);
     }
   };
 
+  const handleOptionClick = (value) => {
+    setMessages(prev => [...prev, { sender: "user", text: value }]);
+    setCurrentOptions(null);
+    sendMessage(value);
+  };
+
   const handleSubmit = async () => {
+    if (isTyping) return;
+    const err = validateInput(input, lang);
+    if (err) { setInputError(err); return; }
     const text = input.trim();
-    if (!text || isTyping) return;
     setMessages(prev => [...prev, { sender: "user", text }]);
     setInput("");
+    setInputError("");
+    setCurrentOptions(null);
     await sendMessage(text);
     inputRef.current?.focus();
   };
 
   const handleKeyDown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } };
-  const handleQuick = (text) => { setMessages(prev => [...prev, { sender: "user", text }]); sendMessage(text); };
+  const handleQuick = (text) => {
+    setMessages(prev => [...prev, { sender: "user", text }]);
+    setCurrentOptions(null);
+    sendMessage(text);
+  };
 
   const deleteSession = (id) => {
     setSessions(prev => { const u = prev.filter(s => s.id !== id); local.set(sessionsKey, u); return u; });
     setConfirm(null);
+    showToast(t.toast_deleted);
   };
-  const deleteAllSessions = () => { setSessions([]); local.set(sessionsKey, []); setConfirm(null); };
-  const startNewChat = () => { stopAudio(); setMessages([]); sessionSaved.current = false; setPage("chat"); };
+  const deleteAllSessions = () => {
+    setSessions([]); local.set(sessionsKey, []);
+    setConfirm(null);
+    showToast(t.toast_all_del);
+  };
+
+  // ── startNewChat — resets voice check-in too ──────────────────
+  const startNewChat = () => {
+    stopAudio();
+    setMessages([]);
+    setCurrentOptions(null);
+    setFeedback({});
+    setThumbsDownCount(0);
+    setPolicyMode("default");
+    setVoiceCheckInDone(false);   // ← resets voice check-in for next session
+    sessionSaved.current = false;
+    setPage("chat");
+  };
 
   const todayTip = DAILY_TIPS[new Date().getDay() % DAILY_TIPS.length];
   const isAnySpeaking = speakingIdx !== null;
   const initials = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+  const firstName = user.name.split(" ")[0];
+  const latestOptions = currentOptions;
+
+  const sidebarProps = {
+    user, page, setPage, sessions, lang, voiceOn, setVoiceOn, speechRate, setSpeechRate,
+    onLogout: () => { stopAudio(); onLogout(); },
+    todayTip,
+  };
 
   return (
     <div className="app">
 
-      {/* ── SIDEBAR ── */}
+      {/* DESKTOP SIDEBAR */}
       <div className="sidebar">
-        <div className="logo-area">
-          <div className="logo-icon">🌿</div>
-          <div className="logo-text">SentiCare</div>
-        </div>
-        <div className="user-badge">
-          <div className="user-avatar">{initials}</div>
-          <div className="user-info">
-            <div className="user-name">{user.name}</div>
-            <div className="user-email">{user.email}</div>
-          </div>
-        </div>
-        <div className="sidebar-label">Navigation</div>
-        <button className={`sidebar-item ${page === "chat" ? "active" : ""}`} onClick={() => setPage("chat")}>
-          <span className="sidebar-item-icon">💬</span> Mental Health Chat
-        </button>
-        <button className={`sidebar-item ${page === "sessions" ? "active" : ""}`} onClick={() => setPage("sessions")}>
-          <span className="sidebar-item-icon">🗂️</span> My Sessions
-          {sessions.length > 0 && <span className="sidebar-item-badge">{sessions.length}</span>}
-        </button>
-        <button className={`sidebar-item ${page === "resources" ? "active" : ""}`} onClick={() => setPage("resources")}>
-          <span className="sidebar-item-icon">📚</span> Resources
-        </button>
-        <button className="sidebar-logout" onClick={onLogout}>
-          <span style={{ fontSize: 15 }}>🚪</span> Sign Out
-        </button>
-        <div className="voice-box">
-          <div className="voice-box-title">🔊 Voice Settings</div>
-          <div className="voice-row">
-            <span className="voice-label">{voiceOn ? "Voice ON" : "Voice OFF"}</span>
-            <button className={`toggle ${voiceOn ? "on" : "off"}`} onClick={() => {
-              stopAudio();
-              setSpeakingIdx(null);
-              setTtsLoading(false);
-              setPopupSpeaking(false);
-              setVoiceOn(v => !v);
-            }}>
-              <div className="toggle-knob" />
-            </button>
-          </div>
-          {voiceOn && (
-            <div className="speed-row">
-              <div className="speed-top">
-                <span className="voice-label">Speed</span>
-                <span className="speed-val">{speechRate.toFixed(1)}x</span>
-              </div>
-              <input type="range" min="0.5" max="2" step="0.1" value={speechRate}
-                onChange={e => {
-                  const r = parseFloat(e.target.value);
-                  setSpeechRate(r);
-                  sharedAudio.playbackRate = r;
-                }} />
-            </div>
-          )}
-        </div>
-        <div className="sidebar-footer">
-          <div className="sidebar-footer-title">💡 Tip of the day</div>
-          <div className="sidebar-footer-text">{todayTip}</div>
-        </div>
+        <SidebarContent {...sidebarProps} />
       </div>
 
-      {/* ── MAIN ── */}
-      <div className="main">
+      {/* MOBILE DRAWER */}
+      {drawerOpen && (
+        <>
+          <div className="drawer-overlay" onClick={() => setDrawerOpen(false)} />
+          <div className="drawer">
+            <SidebarContent {...sidebarProps} onClose={() => setDrawerOpen(false)} />
+          </div>
+        </>
+      )}
 
-        {/* CHAT PAGE */}
+      {/* MAIN */}
+      <div className={`main ${isRTL ? "rtl" : ""}`}>
+
+        {/* ══════════════════════════════════════════
+            CHAT PAGE
+        ══════════════════════════════════════════ */}
         {page === "chat" && (
           <>
             <div className="topbar">
-              <div>
-                <div className="topbar-title">Mental Health Assistant</div>
-                <div className="topbar-sub">AI-powered screening & CBT-based support</div>
+              <button className="hamburger" onClick={() => setDrawerOpen(true)} aria-label={t.menu}>
+                <span />
+              </button>
+              <div className="topbar-left">
+                <div className="topbar-title">{t.topbar_title}</div>
+                <div className="topbar-sub">{t.topbar_sub}</div>
               </div>
-              {isAnySpeaking ? (
-                <div className="speaking-badge">
-                  <div className="wave">
-                    <div className="wave-bar"/><div className="wave-bar"/>
-                    <div className="wave-bar"/><div className="wave-bar"/>
+              <div className="topbar-right">
+                <button className="lang-pill" onClick={toggleLang}>🌐 {t.lang_toggle}</button>
+                {isAnySpeaking ? (
+                  <div className="speaking-badge">
+                    <div className="wave">
+                      <div className="wave-bar"/><div className="wave-bar"/>
+                      <div className="wave-bar"/><div className="wave-bar"/>
+                    </div>
+                    {t.speaking}
                   </div>
-                  Speaking...
-                </div>
-              ) : ttsLoading ? (
-                <div className="status-badge">
-                  <div className="status-dot" style={{ background: "#ffd700" }} /> Loading voice…
-                </div>
-              ) : (
-                <div className="status-badge"><div className="status-dot" /> Available</div>
-              )}
+                ) : ttsLoading ? (
+                  <div className="status-badge"><div className="status-dot" style={{ background: "#ffd700" }} /> {t.loading_voice}</div>
+                ) : (
+                  <div className="status-badge"><div className="status-dot" /> {t.available}</div>
+                )}
+              </div>
             </div>
 
             <div className="messages-area">
-              {messages.length === 0 && (
+              {/* ── VOICE CHECK-IN: shown before any messages, before quick-start ── */}
+              {messages.length === 0 && !voiceCheckInDone && (
+                <VoiceCheckIn
+                  sessionId={sessionId}
+                  lang={lang}
+                  isRTL={isRTL}
+                  onComplete={() => setVoiceCheckInDone(true)}
+                  onSkip={() => setVoiceCheckInDone(true)}
+                />
+              )}
+
+              {/* ── EMPTY STATE: shown after voice check-in is done ── */}
+              {messages.length === 0 && voiceCheckInDone && (
                 <div className="empty-state">
                   <div className="empty-icon-wrap">🌱</div>
-                  <div className="empty-title">Hello {user.name.split(" ")[0]}, I am here for you</div>
-                  <div className="empty-sub">
-                    SentiCare guides you through a short mental health screening and provides personalised CBT-based support.
-                    {voiceOn ? " Voice is ON — I will speak to you." : " Turn on voice in the sidebar."}
-                  </div>
+                  <div className="empty-title">{t.greeting_name(firstName)}</div>
+                  <div className="empty-sub">{t.empty_sub(voiceOn)}</div>
                   <div className="quick-btns">
-                    <button className="quick-btn" onClick={() => handleQuick("Hi, I need support")}>Hi, I need support</button>
-                    <button className="quick-btn" onClick={() => handleQuick("I feel anxious")}>I feel anxious</button>
-                    <button className="quick-btn" onClick={() => handleQuick("I am feeling stressed")}>I am feeling stressed</button>
+                    <button className="quick-btn" onClick={() => handleQuick(t.quick1)}>{t.quick1}</button>
+                    <button className="quick-btn" onClick={() => handleQuick(t.quick2)}>{t.quick2}</button>
+                    <button className="quick-btn" onClick={() => handleQuick(t.quick3)}>{t.quick3}</button>
                   </div>
                 </div>
               )}
+
               {messages.map((msg, i) => (
                 <div key={i} className={`message-row ${msg.sender}`}>
                   <div className={`avatar ${msg.sender}`}>{msg.sender === "bot" ? "SC" : initials}</div>
                   <div className="bubble-wrap">
-                    <div className="sender-name">{msg.sender === "bot" ? "SentiCare" : user.name.split(" ")[0]}</div>
+                    <div className="sender-name">{msg.sender === "bot" ? t.senticare : firstName}</div>
                     <div className={`bubble ${msg.sender}`}>{msg.text}</div>
+
                     {msg.sender === "bot" && (
                       <div className="msg-actions">
                         {voiceOn && (
@@ -846,22 +1035,49 @@ function MainApp({ user, onLogout }) {
                             onClick={() => handleReplay(msg.text, i)}
                             disabled={ttsLoading && speakingIdx !== i}
                           >
-                            {speakingIdx === i ? "⏹ Stop" : ttsLoading && speakingIdx === null ? "⏳" : "🔊 Replay"}
+                            {speakingIdx === i ? t.stop : ttsLoading && speakingIdx === null ? "⏳" : t.replay}
                           </button>
                         )}
                         {isTherapyMessage(msg.text) && (
-                          <button className="view-card-btn" onClick={() => openPopup(msg.text)}>🃏 View Card</button>
+                          <button className="view-card-btn" onClick={() => openPopup(msg.text)}>{t.view_card}</button>
                         )}
+                        {isTherapyMessage(msg.text) && (
+                          <>
+                            {!feedback[i] ? (
+                              <>
+                                <button className="fb-btn up" onClick={() => handleFeedback(i, "up")}>{t.fb_helpful}</button>
+                                <button className="fb-btn down" onClick={() => handleFeedback(i, "down")}>{t.fb_not_helpful}</button>
+                              </>
+                            ) : (
+                              <span className="fb-thanks">
+                                {feedback[i] === "up" ? t.fb_thanks_up : t.fb_thanks_down}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {msg.sender === "bot" &&
+                      isTherapyMessage(msg.text) &&
+                      feedback[i] &&
+                      policyMode === "alternate" &&
+                      i === messages.findLastIndex(m => m.sender === "bot" && isTherapyMessage(m.text)) && (
+                      <div className="ppo-note switch">
+                        ⚡ {lang === "ur"
+                          ? "PPO پالیسی: جواب کی حکمت عملی بدل دی گئی ہے"
+                          : "PPO policy: response strategy switched to alternate template"}
                       </div>
                     )}
                   </div>
                 </div>
               ))}
+
               {isTyping && (
                 <div className="message-row bot">
                   <div className="avatar bot">SC</div>
                   <div className="bubble-wrap">
-                    <div className="sender-name">SentiCare</div>
+                    <div className="sender-name">{t.senticare}</div>
                     <div className="bubble bot">
                       <div className="typing-indicator">
                         <div className="typing-dot"/><div className="typing-dot"/><div className="typing-dot"/>
@@ -873,70 +1089,108 @@ function MainApp({ user, onLogout }) {
               <div ref={bottomRef} />
             </div>
 
+            {latestOptions && latestOptions.length > 0 && !isTyping && (
+              <div className={`option-btns ${isRTL ? "rtl" : ""}`} style={{ padding: "8px 0 0" }}>
+                {latestOptions.map((opt, i) => (
+                  <button key={i} className="option-btn" onClick={() => handleOptionClick(opt.value)}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="input-section">
-              <div className="input-box">
+              <div className={`input-box ${inputError ? "input-error-border" : ""}`}>
                 <textarea
                   ref={inputRef}
                   className="chat-input"
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Share how you are feeling today…"
+                  placeholder={t.placeholder}
                   rows={1}
+                  style={isRTL ? { direction: "rtl", textAlign: "right", fontFamily: "'Noto Nastaliq Urdu', sans-serif" } : {}}
                 />
-                <button className="send-btn" onClick={handleSubmit} disabled={isTyping || !input.trim()}>
+                <button className="send-btn" onClick={handleSubmit} disabled={isTyping || charOver}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13" stroke="white" />
                     <polygon points="22 2 15 22 11 13 2 9 22 2" fill="white" />
                   </svg>
                 </button>
               </div>
-              <div className="input-hint">Press Enter to send · Shift+Enter for new line</div>
+              {inputError && <div className={`input-error ${isRTL ? "rtl" : ""}`}>{inputError}</div>}
+              <div className="input-footer">
+                <div className="input-hint">{t.input_hint}</div>
+                <div className={`char-counter ${charOver ? "over" : charWarn ? "warn" : "ok"}`}>
+                  {t.char_count(charCount, MAX_INPUT_CHARS)}
+                </div>
+              </div>
             </div>
           </>
         )}
 
-        {/* SESSIONS PAGE */}
+        {/* ══════════════════════════════════════════
+            SESSIONS PAGE
+        ══════════════════════════════════════════ */}
         {page === "sessions" && (
           <>
             <div className="topbar">
-              <div>
-                <div className="topbar-title">My Sessions</div>
-                <div className="topbar-sub">Your past mental health conversations</div>
+              <button className="hamburger" onClick={() => setDrawerOpen(true)} aria-label={t.menu}><span /></button>
+              <div className="topbar-left">
+                <div className="topbar-title">{t.sessions_title}</div>
+                <div className="topbar-sub">{t.sessions_sub}</div>
+              </div>
+              <div className="topbar-right">
+                <button className="lang-pill" onClick={toggleLang}>🌐 {t.lang_toggle}</button>
               </div>
             </div>
             <div className="page-content">
               <div className="page-toolbar">
                 <div>
-                  <div className="page-heading">Session History</div>
-                  <div className="page-sub">{sessions.length} saved session{sessions.length !== 1 ? "s" : ""}</div>
+                  <div className="page-heading">{t.sessions_head}</div>
+                  <div className="page-sub">{t.sessions_count(sessions.length)}</div>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button className="new-session-btn" onClick={startNewChat}>+ New Chat</button>
+                  <button className="new-session-btn" onClick={startNewChat}>{t.new_chat}</button>
                   {sessions.length > 0 && (
-                    <button className="clear-all-btn" onClick={() => setConfirm({ type: "all" })}>🗑 Clear All</button>
+                    <button className="clear-all-btn" onClick={() => setConfirm({ type: "all" })}>{t.clear_all}</button>
                   )}
                 </div>
               </div>
+
+              <EmotionTrendChart sessions={sessions} lang={lang} />
+
               {sessions.length === 0 ? (
                 <div className="empty-sessions">
                   <div className="empty-sessions-icon">🗂️</div>
-                  <div className="empty-sessions-text">No sessions yet.<br />Complete a chat to see it saved here.</div>
-                  <button className="quick-btn" style={{ marginTop: 20 }} onClick={startNewChat}>Start your first session →</button>
+                  <div className="empty-sessions-text">{t.no_sessions}<br />{t.no_sessions_sub}</div>
+                  <button className="quick-btn" style={{ marginTop: 20 }} onClick={startNewChat}>{t.start_first}</button>
                 </div>
               ) : (
                 sessions.map(s => (
                   <div key={s.id} className="session-card">
                     <div className="session-card-top">
-                      <div className="session-card-title">Session — {s.date}</div>
-                      <div className="session-card-meta">{s.time} · {s.messageCount} messages</div>
+                      <div className="session-card-title">{t.session_on} {s.date}</div>
+                      <div className="session-card-meta">{s.time} · {s.messageCount} {t.messages}</div>
                     </div>
                     <div className="session-card-preview">{s.preview}</div>
                     <div className="session-card-footer">
-                      <span className={`session-tag tag-${s.condition}`}>
-                        {s.condition === "anxiety" ? "🟠 Anxiety" : s.condition === "stress" ? "🔵 Stress" : "🟢 General"}
-                      </span>
-                      <button className="session-del-btn" onClick={() => setConfirm({ type: "one", id: s.id })}>🗑 Delete</button>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span className={`session-tag tag-${s.condition}`}>
+                          {s.condition === "anxiety" ? t.anxiety_tag : s.condition === "stress" ? t.stress_tag : t.general_tag}
+                        </span>
+                        {s.level && (
+                          <span style={{
+                            padding: "3px 10px", borderRadius: 20, fontSize: "0.72rem", fontWeight: 700,
+                            background: s.level === "high" ? "#fff0f0" : s.level === "medium" ? "#fff8e1" : "#e8f5ee",
+                            color: s.level === "high" ? "#c53030" : s.level === "medium" ? "#7c4f00" : "#0e4d2a",
+                            border: `1.5px solid ${s.level === "high" ? "#fca5a5" : s.level === "medium" ? "#f5d78a" : "#4aaa72"}`,
+                          }}>
+                            {s.level === "high" ? t.trend_high : s.level === "medium" ? t.trend_med : t.trend_low}
+                          </span>
+                        )}
+                      </div>
+                      <button className="session-del-btn" onClick={() => setConfirm({ type: "one", id: s.id })}>{t.delete}</button>
                     </div>
                   </div>
                 ))
@@ -945,18 +1199,24 @@ function MainApp({ user, onLogout }) {
           </>
         )}
 
-        {/* RESOURCES PAGE */}
+        {/* ══════════════════════════════════════════
+            RESOURCES PAGE
+        ══════════════════════════════════════════ */}
         {page === "resources" && (
           <>
             <div className="topbar">
-              <div>
-                <div className="topbar-title">Mental Health Resources</div>
-                <div className="topbar-sub">Practical tools and evidence-based strategies</div>
+              <button className="hamburger" onClick={() => setDrawerOpen(true)} aria-label={t.menu}><span /></button>
+              <div className="topbar-left">
+                <div className="topbar-title">{t.resources_title}</div>
+                <div className="topbar-sub">{t.resources_sub}</div>
+              </div>
+              <div className="topbar-right">
+                <button className="lang-pill" onClick={toggleLang}>🌐 {t.lang_toggle}</button>
               </div>
             </div>
             <div className="page-content">
-              <div className="page-heading">Self-Help Tools</div>
-              <div className="page-sub">Things you can try right now to feel better</div>
+              <div className="page-heading">{t.self_help}</div>
+              <div className="page-sub">{t.self_help_sub}</div>
               <div className="resources-grid">
                 {RESOURCES.map((r, i) => (
                   <div key={i} className="resource-card">
@@ -967,7 +1227,7 @@ function MainApp({ user, onLogout }) {
                 ))}
               </div>
               <div className="tip-section">
-                <div className="tip-section-title">✅ Daily Wellness Checklist</div>
+                <div className="tip-section-title">{t.checklist}</div>
                 {DAILY_TIPS.map((tip, i) => (
                   <div key={i} className="tip-item">
                     <div className="tip-num">{i + 1}</div>
@@ -978,11 +1238,8 @@ function MainApp({ user, onLogout }) {
               <div className="hotline-card">
                 <div className="hotline-icon">📞</div>
                 <div>
-                  <div className="hotline-title">Need immediate help?</div>
-                  <div className="hotline-text">
-                    In Pakistan, the <strong>Umang helpline</strong> is available at <strong>0317-4288665</strong>.
-                    You deserve support and you are not alone.
-                  </div>
+                  <div className="hotline-title">{t.hotline_title}</div>
+                  <div className="hotline-text">{t.hotline_text}</div>
                 </div>
               </div>
             </div>
@@ -995,7 +1252,7 @@ function MainApp({ user, onLogout }) {
         <div className="popup-overlay" onClick={e => { if (e.target === e.currentTarget) closePopup(); }}>
           <div className="popup-card">
             <div className="popup-header">
-              <div className="popup-tag">🌿 Therapy Exercise</div>
+              <div className="popup-tag">{t.therapy_tag}</div>
               <div className="popup-title">{popup.card.title}</div>
               <button className="popup-close" onClick={closePopup}>✕</button>
             </div>
@@ -1018,15 +1275,15 @@ function MainApp({ user, onLogout }) {
                   onClick={() => handlePopupSpeak(popup.text)}
                   disabled={popupTtsLoading}
                 >
-                  {popupTtsLoading ? <>⏳ Loading…</> : popupSpeaking ? (
+                  {popupTtsLoading ? t.loading_dots : popupSpeaking ? (
                     <><div className="wave" style={{ gap: "2px" }}>
                       <div className="wave-bar" style={{ background: "#4ade80" }} />
                       <div className="wave-bar" style={{ background: "#4ade80" }} />
                       <div className="wave-bar" style={{ background: "#4ade80" }} />
-                    </div> Stop Speaking</>
-                  ) : <>🔊 Listen to This</>}
+                    </div> {t.stop_speaking}</>
+                  ) : t.listen}
                 </button>
-                <button className="popup-btn-close" onClick={closePopup}>✓ Got It</button>
+                <button className="popup-btn-close" onClick={closePopup}>{t.got_it}</button>
               </div>
             </div>
           </div>
@@ -1037,14 +1294,15 @@ function MainApp({ user, onLogout }) {
       {confirm && (
         <ConfirmDialog
           icon={confirm.type === "all" ? "🗑️" : "⚠️"}
-          title={confirm.type === "all" ? "Clear All Sessions?" : "Delete This Session?"}
-          text={confirm.type === "all"
-            ? "This will permanently delete all your saved sessions. This cannot be undone."
-            : "This session will be permanently deleted. Are you sure?"}
+          title={confirm.type === "all" ? t.confirm_all_title : t.confirm_one_title}
+          text={confirm.type === "all" ? t.confirm_all_text : t.confirm_one_text}
           onConfirm={() => confirm.type === "all" ? deleteAllSessions() : deleteSession(confirm.id)}
           onCancel={() => setConfirm(null)}
+          lang={lang}
         />
       )}
+
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

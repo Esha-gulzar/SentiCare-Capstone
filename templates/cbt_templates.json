@@ -4,107 +4,274 @@
     "level": "low",
     "therapy": {
       "validation": "It is completely normal to feel a little anxious sometimes. You are doing well.",
+      "validation_ur": "تھوڑی گھبراہٹ محسوس کرنا بالکل عام ہے۔ آپ اچھا کر رہے ہیں۔",
+
       "intervention_steps": [
         "Take a slow deep breath in for 4 counts",
         "Hold for 4 counts",
         "Exhale slowly for 4 counts",
         "Repeat 3 times"
       ],
-      "grounding_statement": "You are safe right now. This feeling will pass."
+      "intervention_steps_ur": [
+        "آہستہ 4 گنتی تک سانس لیں",
+        "4 گنتی روکیں",
+        "4 گنتی تک سانس چھوڑیں",
+        "3 بار دہرائیں"
+      ],
+
+      "intervention_steps_alt": [
+        "Write down what is making you feel anxious right now",
+        "Ask yourself: is this worry something I can act on today?",
+        "If yes, take one small action. If no, let the thought pass",
+        "Remind yourself: most worries never happen"
+      ],
+      "intervention_steps_alt_ur": [
+        "ابھی جو چیز آپ کو پریشان کر رہی ہے اسے لکھیں",
+        "خود سے پوچھیں: کیا یہ فکر آج کچھ کر کے حل ہو سکتی ہے؟",
+        "اگر ہاں تو ایک چھوٹا قدم اٹھائیں، اگر نہیں تو اسے جانے دیں",
+        "یاد کریں: زیادہ تر فکریں کبھی سچ نہیں ہوتیں"
+      ],
+
+      "grounding_statement": "You are safe right now. This feeling will pass.",
+      "grounding_statement_ur": "آپ ابھی محفوظ ہیں۔ یہ احساس گزر جائے گا۔"
     },
     "guided_questions": [
       "What is one small thing you can do today to feel better?",
       "Is there someone you trust you can talk to?"
+    ],
+    "guided_questions_ur": [
+      "آج ایک چھوٹا کام کیا ہے جو آپ بہتر محسوس کرنے کے لیے کر سکتے ہیں؟",
+      "کیا کوئی قابل اعتماد شخص ہے جس سے آپ بات کر سکتے ہیں؟"
     ]
   },
+
   {
     "emotion": "anxiety",
     "level": "medium",
     "therapy": {
       "validation": "I hear you. Anxiety at this level can feel overwhelming but you are not alone.",
+      "validation_ur": "میں آپ کی بات سمجھتا ہوں۔ اس سطح کی گھبراہٹ بہت مشکل ہو سکتی ہے، لیکن آپ اکیلے نہیں ہیں۔",
+
       "intervention_steps": [
         "Identify the specific thought causing anxiety",
         "Challenge it: is it based on fact or fear?",
         "Replace it with a balanced thought",
         "Write it down if possible"
       ],
-      "grounding_statement": "You have handled difficult moments before. You can handle this too."
+      "intervention_steps_ur": [
+        "اس خیال کو پہچانیں جو گھبراہٹ پیدا کر رہا ہے",
+        "سوچیں کیا یہ حقیقت ہے یا خوف؟",
+        "ایک متوازن خیال سے بدلیں",
+        "اگر ممکن ہو تو لکھ لیں"
+      ],
+
+      "intervention_steps_alt": [
+        "Stop what you are doing and plant both feet flat on the floor",
+        "Name 5 things you can see, 4 you can touch, 3 you can hear",
+        "Take 3 slow breaths, breathing out longer than you breathe in",
+        "Say to yourself: I am here, I am safe, this will pass"
+      ],
+      "intervention_steps_alt_ur": [
+        "جو کر رہے ہیں رکیں اور دونوں پاؤں زمین پر رکھیں",
+        "5 چیزیں جو دیکھ سکتے ہیں، 4 جو چھو سکتے ہیں، 3 جو سن سکتے ہیں — نام لیں",
+        "3 آہستہ سانسیں لیں، سانس چھوڑنا سانس لینے سے لمبا ہو",
+        "اپنے آپ سے کہیں: میں یہاں ہوں، میں محفوظ ہوں، یہ گزر جائے گا"
+      ],
+
+      "grounding_statement": "You have handled difficult moments before. You can handle this too.",
+      "grounding_statement_ur": "آپ نے پہلے بھی مشکل لمحات کا سامنا کیا ہے۔ آپ یہ بھی کر سکتے ہیں۔"
     },
     "guided_questions": [
       "What triggered this feeling today?",
       "What would you tell a friend feeling this way?"
+    ],
+    "guided_questions_ur": [
+      "آج یہ احساس کس چیز نے پیدا کیا؟",
+      "اگر آپ کا دوست ایسا محسوس کرتا تو آپ اسے کیا کہتے؟"
     ]
   },
+
   {
     "emotion": "anxiety",
     "level": "high",
     "therapy": {
       "validation": "Thank you for sharing this. What you are feeling is serious and you deserve proper support.",
+      "validation_ur": "آپ نے یہ بات کی، یہ ہمت کی بات ہے۔ آپ کا احساس سنجیدہ ہے اور آپ مدد کے حقدار ہیں۔",
+
       "intervention_steps": [
         "Stop and focus only on your breathing right now",
         "Name 5 things you can see around you",
         "Name 4 things you can touch",
         "Consider reaching out to a mental health professional"
       ],
-      "grounding_statement": "You are brave for seeking help. Professional support can make a real difference."
+      "intervention_steps_ur": [
+        "ابھی صرف اپنی سانس پر توجہ دیں",
+        "5 چیزیں جو آپ دیکھ سکتے ہیں نام لیں",
+        "4 چیزیں جو چھو سکتے ہیں نام لیں",
+        "کسی ماہر نفسیات سے رابطہ کریں"
+      ],
+
+      "intervention_steps_alt": [
+        "Do not try to fight the feeling — let it be there without judging it",
+        "Sit or lie down somewhere safe and close your eyes for 2 minutes",
+        "Breathe in for 4, hold for 7, breathe out for 8 — repeat 4 times",
+        "When you feel ready, call or message one trusted person right now"
+      ],
+      "intervention_steps_alt_ur": [
+        "احساس سے لڑنے کی کوشش نہ کریں — بغیر فیصلہ کیے اسے رہنے دیں",
+        "کسی محفوظ جگہ بیٹھیں یا لیٹیں اور 2 منٹ آنکھیں بند کریں",
+        "4 گنتی سانس لیں، 7 گنتی روکیں، 8 گنتی میں چھوڑیں — 4 بار دہرائیں",
+        "جب تیار محسوس کریں، کسی قابل اعتماد شخص کو ابھی کال یا میسج کریں"
+      ],
+
+      "grounding_statement": "You are brave for seeking help. Professional support can make a real difference.",
+      "grounding_statement_ur": "مدد مانگنا کمزوری نہیں، ہمت ہے۔ پیشہ ورانہ مدد فرق ڈال سکتی ہے۔"
     },
     "guided_questions": [
       "Have you spoken to anyone about how you are feeling?",
       "Would you be open to speaking with a counselor?"
+    ],
+    "guided_questions_ur": [
+      "کیا آپ نے کسی کو اپنے احساسات کے بارے میں بتایا ہے؟",
+      "کیا آپ کسی مشیر سے بات کرنے کے لیے تیار ہیں؟"
     ]
   },
+
   {
     "emotion": "stress",
     "level": "low",
     "therapy": {
       "validation": "A little stress is normal and can even be motivating. You are managing well.",
+      "validation_ur": "تھوڑا دباؤ عام ہے اور حوصلہ افزا بھی ہو سکتا ہے۔ آپ اچھا کر رہے ہیں۔",
+
       "intervention_steps": [
         "Take a short 5 minute break",
         "Stretch or take a brief walk",
         "Prioritize your top 3 tasks for today",
         "Celebrate small wins"
       ],
-      "grounding_statement": "You are in control. One step at a time is enough."
+      "intervention_steps_ur": [
+        "5 منٹ کا وقفہ لیں",
+        "کھنچاؤ یا چھوٹی سیر کریں",
+        "آج کے 3 اہم کام ترتیب دیں",
+        "چھوٹی کامیابیوں کو سراہیں"
+      ],
+
+      "intervention_steps_alt": [
+        "Write a short list of everything on your mind right now",
+        "Cross off anything you cannot control today",
+        "Pick only one item from what remains and focus on it",
+        "Set a 25 minute timer and work only on that one thing"
+      ],
+      "intervention_steps_alt_ur": [
+        "ابھی جو کچھ ذہن میں ہے اس کی مختصر فہرست لکھیں",
+        "جو آپ کے اختیار میں نہیں وہ کاٹ دیں",
+        "باقی میں سے صرف ایک چیز چنیں",
+        "25 منٹ کا ٹائمر لگائیں اور صرف اس ایک چیز پر کام کریں"
+      ],
+
+      "grounding_statement": "You are in control. One step at a time is enough.",
+      "grounding_statement_ur": "آپ خود کو سنبھال سکتے ہیں۔ ایک قدم کافی ہے۔"
     },
     "guided_questions": [
       "What is one thing you can let go of today?",
       "What has been working well for you lately?"
+    ],
+    "guided_questions_ur": [
+      "آج کون سی ایک چیز ہے جسے آپ چھوڑ سکتے ہیں؟",
+      "حال ہی میں آپ کے لیے کیا اچھا کام کر رہا ہے؟"
     ]
   },
+
   {
     "emotion": "stress",
     "level": "medium",
     "therapy": {
       "validation": "It sounds like you are carrying a lot right now. That takes real strength to acknowledge.",
+      "validation_ur": "لگتا ہے آپ بہت کچھ اٹھائے ہوئے ہیں۔ یہ تسلیم کرنا اپنے آپ میں ہمت ہے۔",
+
       "intervention_steps": [
         "Write down everything stressing you",
         "Separate what you can and cannot control",
         "Focus your energy only on what you can control",
         "Set one small achievable goal for today"
       ],
-      "grounding_statement": "You do not have to solve everything at once. Progress matters more than perfection."
+      "intervention_steps_ur": [
+        "ہر وہ بات لکھیں جو پریشان کر رہی ہے",
+        "جو آپ کے اختیار میں ہے اور جو نہیں — الگ کریں",
+        "صرف اپنے اختیار والی باتوں پر توجہ دیں",
+        "آج ایک چھوٹا قابل حصول ہدف بنائیں"
+      ],
+
+      "intervention_steps_alt": [
+        "Put your phone down and step outside or open a window for fresh air",
+        "Tense every muscle in your body for 5 seconds then release completely",
+        "Repeat this muscle relaxation from feet to shoulders 3 times",
+        "Decide one task you will NOT do today to protect your energy"
+      ],
+      "intervention_steps_alt_ur": [
+        "فون رکھیں اور باہر جائیں یا تازہ ہوا کے لیے کھڑکی کھولیں",
+        "جسم کے تمام پٹھے 5 گنتی تک کس لیں پھر پوری طرح ڈھیلا چھوڑ دیں",
+        "پاؤں سے کندھوں تک یہ مشق 3 بار کریں",
+        "ایک کام جو آج نہیں کریں گے، ابھی طے کریں — اپنی توانائی بچائیں"
+      ],
+
+      "grounding_statement": "You do not have to solve everything at once. Progress matters more than perfection.",
+      "grounding_statement_ur": "سب کچھ ایک ساتھ حل نہیں کرنا۔ آگے بڑھنا کافی ہے۔"
     },
     "guided_questions": [
       "What is taking up most of your mental energy right now?",
       "What would help you feel even 10% better today?"
+    ],
+    "guided_questions_ur": [
+      "ابھی آپ کی ذہنی توانائی سب سے زیادہ کہاں جا رہی ہے؟",
+      "کیا چیز آپ کو آج 10 فیصد بہتر محسوس کرا سکتی ہے؟"
     ]
   },
+
   {
     "emotion": "stress",
     "level": "high",
     "therapy": {
       "validation": "This level of stress is serious and your feelings are completely valid. You need and deserve support.",
+      "validation_ur": "اس سطح کا دباؤ سنجیدہ ہے اور آپ کے احساسات بالکل درست ہیں۔ آپ کو مدد ملنی چاہیے۔",
+
       "intervention_steps": [
         "Pause all non-urgent tasks if possible",
         "Talk to someone you trust today",
         "Focus only on basic self-care: sleep, water, food",
         "Consider speaking to a counselor or doctor"
       ],
-      "grounding_statement": "Asking for help is a sign of strength not weakness. You matter."
+      "intervention_steps_ur": [
+        "غیر ضروری کام ابھی روکیں",
+        "آج کسی قابل اعتماد شخص سے بات کریں",
+        "صرف بنیادی چیزوں پر توجہ دیں: نیند، پانی، کھانا",
+        "کسی ماہر یا ڈاکٹر سے ملیں"
+      ],
+
+      "intervention_steps_alt": [
+        "Give yourself permission to stop completely for the next 10 minutes",
+        "Sit quietly and breathe slowly — do not plan, do not check your phone",
+        "Write down three things that have gone right this week, however small",
+        "Reach out to one person today — even a short message counts"
+      ],
+      "intervention_steps_alt_ur": [
+        "اپنے آپ کو اجازت دیں — اگلے 10 منٹ مکمل طور پر رکیں",
+        "خاموش بیٹھیں اور آہستہ سانس لیں — کوئی منصوبہ نہیں، فون نہیں",
+        "اس ہفتے جو تین چیزیں اچھی گئیں وہ لکھیں، چاہے کتنی ہی چھوٹی ہوں",
+        "آج ایک شخص سے رابطہ کریں — ایک چھوٹا میسج بھی کافی ہے"
+      ],
+
+      "grounding_statement": "Asking for help is a sign of strength not weakness. You matter.",
+      "grounding_statement_ur": "مدد مانگنا کمزوری نہیں بلکہ طاقت کی علامت ہے۔ آپ اہم ہیں۔"
     },
     "guided_questions": [
       "Is there anyone who can help lighten your load right now?",
       "When did you last feel at peace and what helped then?"
+    ],
+    "guided_questions_ur": [
+      "کیا کوئی ہے جو ابھی آپ کا بوجھ ہلکا کرنے میں مدد کر سکتا ہے؟",
+      "آپ آخری بار کب سکون میں تھے اور کس چیز نے مدد کی تھی؟"
     ]
   }
 ]
