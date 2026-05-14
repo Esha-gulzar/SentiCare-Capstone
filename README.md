@@ -64,10 +64,6 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 ![Git](https://img.shields.io/badge/Git-F05032?style=flat-square&logo=git&logoColor=white)
 ![Hugging Face](https://img.shields.io/badge/Hugging%20Face-FFD21E?style=flat-square&logo=huggingface&logoColor=black)
 
----
-
-## 📁 Repository Structure
-
 ## 📂 Repository Structure
 
 ```text
@@ -86,7 +82,7 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 ├── app.py                    # Flask API entry point
 ├── Dockerfile                # Container configuration
 └── README.md
----
+```
 
 ## 🚀 Installation
 
@@ -96,24 +92,23 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 - Git
 
 ### Backend Setup
-
+```
 git clone https://github.com/sheikh-zain786/SentiCare-Capstone.git
 cd SentiCare-Capstone
 python -m venv venv
 source venv/bin/activate # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python app.py # Runs on http://localhost:5000
-
+```
 ### Frontend Setup
-
+```
 cd senticare-frontend
 npm install
 npm start # Runs on http://localhost:3000
-
+```
 
 Make sure the backend is running before using the frontend.
 
----
 
 ## 💡 Usage
 1. Open the frontend in your browser.
@@ -123,10 +118,9 @@ Make sure the backend is running before using the frontend.
 5. The AI fuses your voice emotion with your answers and gives a preliminary assessment.
 6. Continue the conversation in the chat – the bot will remember your data and offer personalised support.
 
----
 
 ## 🖼️ Architecture (High‑Level)
-
+```
 User Browser
     │
     ├── Voice Recording (MediaRecorder)
@@ -154,8 +148,7 @@ User Browser
                    ▼
             Audio sent back to browser
 
-
----
+```
 
 ## 👥 Team & Credits
 
@@ -168,11 +161,10 @@ User Browser
 ### Developers
 | Name | 
 |------|
-| **Sheikh Zain** | 
+| **Esha Gulzar** | 
 | **Wajeeha Ijaz**  |
-| **Esha Gulzar**  | 
+| **Sheikh Zain**  |   
 
----
 
 ## 📜 License
 This project is licensed under the **MIT License** – see the [LICENSE](LICENSE) file for details.
