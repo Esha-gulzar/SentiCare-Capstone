@@ -68,23 +68,24 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 
 ## 📁 Repository Structure
 
-.
-├── Datasets/ # CSV datasets for anxiety, stress, depression
-├── Design Document/ # Detailed design doc (Word + PDF)
-├── Presentation/ # Final project presentation
-├── SentiCare Diagrams/ # UML diagrams (Class, ER, Sequence, etc.)
-├── SentiCare SRS/ # Software Requirements Specification
-├── senticare-frontend/ # React application
-│ ├── src/
-│ │ ├── components/ # VoiceCheckIn, TherapyCards, etc.
-│ │ ├── App.jsx
-│ │ └── ...
-│ └── package.json
-├── artifacts/ # Trained model pipelines (.joblib)
-├── app.py # Flask API entry point
-├── Dockerfile # Container configuration
-└── README.md
+## 📂 Repository Structure
 
+```text
+.
+├── Datasets/                 # CSV datasets for anxiety, stress, depression
+├── Design Document/          # Detailed design doc (Word + PDF)
+├── Presentation/             # Final project presentation
+├── SentiCare Diagrams/       # UML diagrams (Class, ER, Sequence, etc.)
+├── SentiCare SRS/            # Software Requirements Specification
+├── senticare-frontend/       # React application
+│   ├── src/
+│   │   ├── components/       # VoiceCheckIn, TherapyCards, etc.
+│   │   └── App.jsx
+│   └── package.json
+├── artifacts/                # Trained model pipelines (.joblib)
+├── app.py                    # Flask API entry point
+├── Dockerfile                # Container configuration
+└── README.md
 ---
 
 ## 🚀 Installation
