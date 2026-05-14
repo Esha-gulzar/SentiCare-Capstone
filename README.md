@@ -67,22 +67,23 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 ---
 
 ## 📁 Repository Structure
-├── Datasets/ # CSV datasets for anxiety, stress, depression
-├── Design Document/ # Detailed design doc (Word + PDF)
-├── Presentation/ # Final project presentation
-├── SentiCare Diagrams/ # UML diagrams (Class, ER, Sequence, etc.)
-├── SentiCare SRS/ # Software Requirements Specification
-├── senticare-frontend/ # React application
-│ ├── src/
-│ │ ├── components/ # VoiceCheckIn, TherapyCards, etc.
-│ │ ├── App.jsx
-│ │ └── ...
-│ └── package.json
-├── artifacts/ # Trained model pipelines (.joblib)
-├── app.py # Flask API entry point
-├── Dockerfile # Container configuration
-└── README.md
 
+.
+├── Datasets/                    # CSV datasets for anxiety, stress, depression
+├── Design Document/             # Detailed design doc (Word + PDF)
+├── Presentation/                # Final project presentation
+├── SentiCare Diagrams/          # UML diagrams (Class, ER, Sequence, etc.)
+├── SentiCare SRS/               # Software Requirements Specification
+├── senticare-frontend/          # React application
+│   ├── src/
+│   │   ├── components/          # VoiceCheckIn, TherapyCards, etc.
+│   │   ├── App.jsx
+│   │   └── ...
+│   └── package.json
+├── artifacts/                   # Trained model pipelines (.joblib)
+├── app.py                       # Flask API entry point
+├── Dockerfile                   # Container configuration
+└── README.md
 
 ---
 
@@ -98,81 +99,92 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 git clone https://github.com/sheikh-zain786/SentiCare-Capstone.git
 cd SentiCare-Capstone
 python -m venv venv
-source venv/bin/activate   # On Windows: venv\Scripts\activate
+source venv/bin/activate # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-python app.py              # Runs on http://localhost:5000
-Frontend Setup
-bash
+python app.py # Runs on http://localhost:5000
+
+### Frontend Setup
+
 cd senticare-frontend
 npm install
-npm start                  # Runs on http://localhost:3000
+npm start # Runs on http://localhost:3000
+
+
 Make sure the backend is running before using the frontend.
 
+---
 
-💡 Usage
-Open the frontend in your browser.
+## 💡 Usage
+1. Open the frontend in your browser.
+2. Allow microphone access when prompted.
+3. Click **Start Voice Check‑In** and speak for up to 30 seconds.
+4. Answer the follow‑up questionnaire about your mood, sleep, etc.
+5. The AI fuses your voice emotion with your answers and gives a preliminary assessment.
+6. Continue the conversation in the chat – the bot will remember your data and offer personalised support.
 
-Allow microphone access when prompted.
+---
 
-Click Start Voice Check‑In and speak for up to 30 seconds.
-
-Answer the follow‑up questionnaire about your mood, sleep, etc.
-
-The AI fuses your voice emotion with your answers and gives a preliminary assessment.
-
-Continue the conversation in the chat – the bot will remember your data and offer personalised support.
-
-🖼️ Architecture (High‑Level)
+## 🖼️ Architecture (High‑Level)
 
 User Browser
-    │
-    ├── Voice Recording (MediaRecorder)
-    └── Questionnaire Answers
-            │
-            ▼
-     ┌──────────────┐
-     │  React App   │
-     └──────┬───────┘
-            │ HTTP/REST
-            ▼
-     ┌──────────────┐
-     │ Flask API    │
-     │ (app.py)     │
-     └──────┬───────┘
-            │
-            ├── Load Preprocessor & Models (joblib)
-            ├── Process voice features (extracted by frontend)
-            ├── Predict Anxiety / Stress / Depression
-            └── Generate empathetic response
-                   │
-                   ▼
-            Text‑to‑Speech (Edge‑TTS)
-                   │
-                   ▼
-            Audio sent back to browser
-👥 Team & Credits
-Project Manager
-Dr. Illyas – University of Sargodha
+│
+├── Voice Recording (MediaRecorder)
+└── Questionnaire Answers
+│
+▼
+┌──────────────┐
+│ React App │
+└──────┬───────┘
+│ HTTP/REST
+▼
+┌──────────────┐
+│ Flask API │
+│ (app.py) │
+└──────┬───────┘
+│
+├── Load Preprocessor & Models (joblib)
+├── Process voice features (extracted by frontend)
+├── Predict Anxiety / Stress / Depression
+└── Generate empathetic response
+│
+▼
+Text‑to‑Speech (Edge‑TTS)
+│
+▼
+Audio sent back to browser
 
-Project Supervisor
-Dr. Saad Razaq – University of Sargodha
 
-Developers
-Name	GitHub	Role
-Sheikh Zain	@sheikh-zain786	Full‑Stack Developer & ML Engineer
-Wajeeha Ijaz	@wajeeha-ijaz	Frontend & UX Designer
-Esha Gulzar	@eshagulzar	Data Scientist & Documentation Lead
-⚠️ Note: Badarmunir1 was included in the repository history by mistake and is not part of the project team.
+---
 
-📜 License
-This project is licensed under the MIT License – see the LICENSE file for details.
+## 👥 Team & Credits
 
-🙏 Acknowledgements
-Mental health datasets: Student Mental Health Survey
+### Project Manager
+- **Dr. Illyas** – *University of Sargodha*
 
-Edge TTS for high‑quality, multilingual speech synthesis
+### Project Supervisor
+- **Dr. Saad Razaq** – *University of Sargodha*
 
-Hugging Face Spaces for cloud deployment inspiration
+### Developers
+| Name | 
+|------|
+| **Sheikh Zain** | 
+| **Wajeeha Ijaz**  |
+| **Esha Gulzar**  | 
 
-<div align="center"> Made with ❤️ by the SentiCare Team – University of Sargodha, 2025–2026 </div> ```
+---
 
+## 📜 License
+This project is licensed under the **MIT License** – see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgements
+- Mental health datasets: [Student Mental Health Survey](https://www.kaggle.com/datasets/sonia22222/students-mental-health-assessments)
+- Edge TTS for high‑quality, multilingual speech synthesis
+- Hugging Face Spaces for cloud deployment inspiration
+
+---
+
+<div align="center">
+Made with ❤️ by the SentiCare Team – University of Sargodha, 2025–2026
+</div>
