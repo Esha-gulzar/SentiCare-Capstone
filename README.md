@@ -69,20 +69,20 @@ SentiCare is a capstone project developed at the **University of Sargodha**. It 
 ## 📁 Repository Structure
 
 .
-├── Datasets/                    # CSV datasets for anxiety, stress, depression
-├── Design Document/             # Detailed design doc (Word + PDF)
-├── Presentation/                # Final project presentation
-├── SentiCare Diagrams/          # UML diagrams (Class, ER, Sequence, etc.)
-├── SentiCare SRS/               # Software Requirements Specification
-├── senticare-frontend/          # React application
-│   ├── src/
-│   │   ├── components/          # VoiceCheckIn, TherapyCards, etc.
-│   │   ├── App.jsx
-│   │   └── ...
-│   └── package.json
-├── artifacts/                   # Trained model pipelines (.joblib)
-├── app.py                       # Flask API entry point
-├── Dockerfile                   # Container configuration
+├── Datasets/ # CSV datasets for anxiety, stress, depression
+├── Design Document/ # Detailed design doc (Word + PDF)
+├── Presentation/ # Final project presentation
+├── SentiCare Diagrams/ # UML diagrams (Class, ER, Sequence, etc.)
+├── SentiCare SRS/ # Software Requirements Specification
+├── senticare-frontend/ # React application
+│ ├── src/
+│ │ ├── components/ # VoiceCheckIn, TherapyCards, etc.
+│ │ ├── App.jsx
+│ │ └── ...
+│ └── package.json
+├── artifacts/ # Trained model pipelines (.joblib)
+├── app.py # Flask API entry point
+├── Dockerfile # Container configuration
 └── README.md
 
 ---
@@ -127,31 +127,31 @@ Make sure the backend is running before using the frontend.
 ## 🖼️ Architecture (High‑Level)
 
 User Browser
-│
-├── Voice Recording (MediaRecorder)
-└── Questionnaire Answers
-│
-▼
-┌──────────────┐
-│ React App │
-└──────┬───────┘
-│ HTTP/REST
-▼
-┌──────────────┐
-│ Flask API │
-│ (app.py) │
-└──────┬───────┘
-│
-├── Load Preprocessor & Models (joblib)
-├── Process voice features (extracted by frontend)
-├── Predict Anxiety / Stress / Depression
-└── Generate empathetic response
-│
-▼
-Text‑to‑Speech (Edge‑TTS)
-│
-▼
-Audio sent back to browser
+    │
+    ├── Voice Recording (MediaRecorder)
+    └── Questionnaire Answers
+            │
+            ▼
+     ┌──────────────┐
+     │  React App   │
+     └──────┬───────┘
+            │ HTTP/REST
+            ▼
+     ┌──────────────┐
+     │ Flask API    │
+     │ (app.py)     │
+     └──────┬───────┘
+            │
+            ├── Load Preprocessor & Models (joblib)
+            ├── Process voice features (extracted by frontend)
+            ├── Predict Anxiety / Stress / Depression
+            └── Generate empathetic response
+                   │
+                   ▼
+            Text‑to‑Speech (Edge‑TTS)
+                   │
+                   ▼
+            Audio sent back to browser
 
 
 ---
