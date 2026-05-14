@@ -41,7 +41,7 @@ class STT:
     @staticmethod
     def _get_model():
         if STT._model is None:
-            MODEL_SIZE = "medium"
+            MODEL_SIZE = "small"
             print(f"[STT] Loading Whisper '{MODEL_SIZE}' model…", flush=True)
             STT._model = whisper.load_model(MODEL_SIZE)
             print("[STT] Whisper model ready.", flush=True)

@@ -12,17 +12,4 @@ __pycache__/
 # Environment files
 .env
 
-# # Broken folder (important)
-# SentiCare/artifacts/
-# artifacts/
 
-*.pdf
-*.png
-*.jpg
-*.doc
-*.docx
-Design Document/
-Presentation/
-SentiCare Diagrams/
-proposal/
-SentiCare SRS/

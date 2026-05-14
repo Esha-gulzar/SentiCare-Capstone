@@ -1,35 +1,40 @@
-# voice_input_handler.py — FIXED v6
+# voice_input_handler.py — FIXED v7
 #
-# BUGS FIXED vs v5:
+# CHANGES vs v6:
 # ─────────────────────────────────────────────────────────────────────────────
-# BUG 1 FIX — ffmpeg volume=100 → volume=3.0
-#   volume=100 means 100× amplification (+40 dB). Every real mic recording
-#   becomes a hard-clipped square wave pegged at ±32767. librosa then receives
-#   distorted audio → piptrack returns pitch=0 → biomarker emotion="neutral"
-#   → EmotionAnalyzer returns "neutral" every time.
-#   volume=3.0 = 3× gain (+9.5 dB), enough to lift quiet laptop-mic audio
-#   without clipping normal speech.
+# NLU INTEGRATION:
+#   run_pipeline() now runs NLU between STT and EmotionAnalyzer, matching
+#   the class diagram exactly:
 #
-# BUG 2 FIX — silence guard in run_pipeline() now also requires empty transcript
-#   Previous: is_truly_silent = pitch==0 AND tone < threshold
-#   Fixed:    is_truly_silent = pitch==0 AND tone < threshold AND transcript==""
-#   Prevents falsely short-circuiting to "neutral" when STT did pick up words
-#   even if acoustic features are weak.
+#     VoiceInputHandler → STT → NLU → EmotionAnalyzer
+#                                ↑
+#                          (new step added here)
 #
-# ALL OTHER CODE IDENTICAL TO v5.
+#   The NLU result is:
+#     1. Passed into EmotionAnalyzer.classify_emotion() as nlu_result
+#     2. Included in the returned dict so the frontend can display keywords
+#        and intent if needed
+#
+# VOICE + QUESTIONS ML FUSION (Option A):
+#   run_pipeline() now stores the voice fusion scores in the returned dict
+#   under the key "voice_fusion_for_ml". These are read by app.py at the
+#   end of the features stage to adjust the ML prediction level.
+#
+# ALL OTHER CODE IDENTICAL TO v6.
+# ─────────────────────────────────────────────────────────────────────────────
 
 import os
 import io
 import subprocess
 import tempfile
 import wave
-import struct
 
 import numpy as np
 
 from backend.stt              import STT
 from backend.voice_biomarker  import VoiceBiomarker
 from backend.emotion_analyzer import EmotionAnalyzer
+from backend.nlu              import NLU          # ← NEW
 
 
 class VoiceInputHandler:
@@ -51,7 +56,7 @@ class VoiceInputHandler:
         cmd = [
             "ffmpeg", "-y",
             "-i", input_path,
-            "-af", "volume=3.0",   # BUG 1 FIX: was volume=100 (100× = hard clip)
+            "-af", "volume=3.0",
             "-ar", str(target_sr),
             "-ac", "1",
             "-f",  "wav",
@@ -105,14 +110,9 @@ class VoiceInputHandler:
             return False, 0.0
 
         if rms < VoiceInputHandler.INT16_RMS_THRESHOLD:
-            print(
-                f"[ffmpeg] rms={rms:.4f} < threshold={VoiceInputHandler.INT16_RMS_THRESHOLD}"
-                f" → SILENT ✗",
-                flush=True,
-            )
+            print(f"[ffmpeg] rms={rms:.4f} < threshold → SILENT ✗", flush=True)
             return False, rms
 
-        print(f"[ffmpeg] ✓  rms={rms:.4f}", flush=True)
         return True, rms
 
     # ── Strategy 2: PyAV float32 ─────────────────────────────────────────────
@@ -138,12 +138,6 @@ class VoiceInputHandler:
 
             stream  = audio_streams[0]
             orig_sr = stream.codec_context.sample_rate
-            print(
-                f"[PyAV-f32] codec={stream.codec_context.name}  "
-                f"sr={orig_sr}  ch={stream.codec_context.channels}",
-                flush=True,
-            )
-
             resampler = av.AudioResampler(format="fltp", layout="mono", rate=orig_sr)
 
             for frame in container.decode(stream):
@@ -165,15 +159,12 @@ class VoiceInputHandler:
             return False, 0.0
 
         if not all_frames:
-            print("[PyAV-f32] Zero frames decoded.", flush=True)
             return False, 0.0
 
         audio_f32 = np.concatenate(all_frames)
         rms_f32   = float(np.sqrt(np.mean(audio_f32 ** 2)))
-        print(f"[PyAV-f32] {len(audio_f32)} float32 samples  rms={rms_f32:.6f}", flush=True)
 
         if rms_f32 < VoiceInputHandler.FLOAT32_RMS_THRESHOLD:
-            print(f"[PyAV-f32] SILENT ✗  rms={rms_f32:.6f}", flush=True)
             return False, rms_f32
 
         if orig_sr and orig_sr != target_sr:
@@ -185,7 +176,6 @@ class VoiceInputHandler:
 
         audio_i16 = (audio_f32 * 32767).clip(-32768, 32767).astype(np.int16)
         rms_i16   = float(np.sqrt(np.mean(audio_i16.astype(np.float32) ** 2)))
-        print(f"[PyAV-f32] int16 rms={rms_i16:.2f}", flush=True)
 
         try:
             with wave.open(output_wav_path, "wb") as wf:
@@ -193,7 +183,6 @@ class VoiceInputHandler:
                 wf.setsampwidth(2)
                 wf.setframerate(target_sr)
                 wf.writeframes(audio_i16.tobytes())
-            print(f"[PyAV-f32] WAV written: {os.path.getsize(output_wav_path)} bytes ✓", flush=True)
             return True, rms_i16
         except Exception as e:
             print(f"[PyAV-f32] WAV write failed: {e}", flush=True)
@@ -213,10 +202,8 @@ class VoiceInputHandler:
         if data.ndim > 1:
             data = data.mean(axis=1)
         rms = float(np.sqrt(np.mean(data ** 2)))
-        print(f"[soundfile-direct] {len(data)} samples  sr={file_sr}  rms={rms:.6f}", flush=True)
 
         if rms < VoiceInputHandler.FLOAT32_RMS_THRESHOLD:
-            print("[soundfile-direct] SILENT ✗", flush=True)
             return False, rms
 
         if file_sr != target_sr:
@@ -234,7 +221,6 @@ class VoiceInputHandler:
                 wf.setsampwidth(2)
                 wf.setframerate(target_sr)
                 wf.writeframes(audio_i16.tobytes())
-            print(f"[soundfile-direct] WAV written ✓  rms={rms_i16:.2f}", flush=True)
             return True, rms_i16
         except Exception as e:
             print(f"[soundfile-direct] WAV write failed: {e}", flush=True)
@@ -262,8 +248,6 @@ class VoiceInputHandler:
             audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
 
         rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-        print(f"[wav-direct] sr={fr}  samples={len(audio)}  rms={rms:.2f}", flush=True)
-
         if rms < VoiceInputHandler.INT16_RMS_THRESHOLD:
             return False, rms
 
@@ -282,7 +266,6 @@ class VoiceInputHandler:
             wf.setframerate(target_sr)
             wf.writeframes(audio.tobytes())
 
-        print("[wav-direct] WAV written ✓", flush=True)
         return True, rms
 
     # ── Strategy 5: pydub ────────────────────────────────────────────────────
@@ -290,23 +273,20 @@ class VoiceInputHandler:
         try:
             from pydub import AudioSegment
         except ImportError:
-            print("[pydub] Not installed — pip install pydub", flush=True)
+            print("[pydub] Not installed.", flush=True)
             return False, 0.0
 
         try:
             audio = AudioSegment.from_file(input_path)
-            audio = (audio.set_frame_rate(16000).set_channels(1).set_sample_width(2))
+            audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
             audio.export(out_path, format="wav")
             size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
             if size < self.MIN_WAV_BYTES:
                 return False, 0.0
             samples = np.array(audio.get_array_of_samples(), dtype=np.int16)
             rms     = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
-            print(f"[pydub] samples={len(samples)}  rms={rms:.2f}", flush=True)
             if rms < self.INT16_RMS_THRESHOLD:
-                print(f"[pydub] SILENT ✗", flush=True)
                 return False, rms
-            print(f"[pydub] ✓  rms={rms:.2f}", flush=True)
             return True, rms
         except Exception as exc:
             print(f"[pydub] Failed: {exc}", flush=True)
@@ -332,15 +312,7 @@ class VoiceInputHandler:
 
             rms      = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
             duration = nf / fr
-
-            print(
-                f"[verify-wav] frames={nf}  sr={fr}  ch={ch}  "
-                f"duration={duration:.2f}s  rms={rms:.4f}",
-                flush=True,
-            )
-
             has_audio = rms > VoiceInputHandler.INT16_RMS_THRESHOLD
-            print(f"[verify-wav] → {'AUDIO CONFIRMED ✓' if has_audio else 'STILL SILENT ✗'}", flush=True)
             return has_audio, rms
 
         except Exception as e:
@@ -356,55 +328,45 @@ class VoiceInputHandler:
         file_size = os.path.getsize(input_path)
         print(f"[VoiceInputHandler] preprocess: {input_path} ({file_size} bytes)", flush=True)
 
-        print("[VoiceInputHandler] Strategy 1: ffmpeg → WAV file...", flush=True)
-        ok, rms = self._decode_ffmpeg_pipe(input_path, out_path)
-        if ok:
-            has_audio, verified_rms = self._verify_wav(out_path)
-            if has_audio:
-                print(f"[VoiceInputHandler] ✓ Strategy 1 succeeded  rms={verified_rms:.2f}", flush=True)
-                return out_path
-
-        print("[VoiceInputHandler] Strategy 2: PyAV float32...", flush=True)
-        ok, rms = self._decode_pyav_float32(input_path, out_path)
-        if ok:
-            has_audio, verified_rms = self._verify_wav(out_path)
-            if has_audio:
-                print(f"[VoiceInputHandler] ✓ Strategy 2 succeeded  rms={verified_rms:.2f}", flush=True)
-                return out_path
-
-        print("[VoiceInputHandler] Strategy 3: soundfile direct...", flush=True)
-        ok, rms = self._decode_soundfile_direct(input_path, out_path)
-        if ok:
-            has_audio, verified_rms = self._verify_wav(out_path)
-            if has_audio:
-                print(f"[VoiceInputHandler] ✓ Strategy 3 succeeded  rms={verified_rms:.2f}", flush=True)
-                return out_path
-
-        print("[VoiceInputHandler] Strategy 4: WAV direct...", flush=True)
-        ok, rms = self._try_read_as_wav(input_path, out_path)
-        if ok:
-            has_audio, verified_rms = self._verify_wav(out_path)
-            if has_audio:
-                print(f"[VoiceInputHandler] ✓ Strategy 4 succeeded  rms={verified_rms:.2f}", flush=True)
-                return out_path
-
-        print("[VoiceInputHandler] Strategy 5: pydub...", flush=True)
-        ok, rms = self._decode_with_pydub(input_path, out_path)
-        if ok:
-            has_audio, verified_rms = self._verify_wav(out_path)
-            if has_audio:
-                print(f"[VoiceInputHandler] ✓ Strategy 5 succeeded  rms={verified_rms:.2f}", flush=True)
-                return out_path
+        for strategy_name, strategy_fn in [
+            ("Strategy 1: ffmpeg",          lambda: self._decode_ffmpeg_pipe(input_path, out_path)),
+            ("Strategy 2: PyAV float32",    lambda: self._decode_pyav_float32(input_path, out_path)),
+            ("Strategy 3: soundfile direct",lambda: self._decode_soundfile_direct(input_path, out_path)),
+            ("Strategy 4: WAV direct",      lambda: self._try_read_as_wav(input_path, out_path)),
+            ("Strategy 5: pydub",           lambda: self._decode_with_pydub(input_path, out_path)),
+        ]:
+            print(f"[VoiceInputHandler] {strategy_name}...", flush=True)
+            ok, rms = strategy_fn()
+            if ok:
+                has_audio, verified_rms = self._verify_wav(out_path)
+                if has_audio:
+                    print(
+                        f"[VoiceInputHandler] ✓ {strategy_name} succeeded  "
+                        f"rms={verified_rms:.2f}",
+                        flush=True,
+                    )
+                    return out_path
 
         print("[VoiceInputHandler] ALL strategies failed. Returning last output path.", flush=True)
         return out_path
 
     # ── run_pipeline ─────────────────────────────────────────────────────────
     def run_pipeline(self, audio_path: str, lang: str = "en") -> dict:
+        """
+        Full pipeline:
+          preprocess → STT → NLU → VoiceBiomarker → EmotionAnalyzer
+
+        Returns dict with keys:
+            transcript, dominant_emotion, fusion, biomarkers,
+            nlu (intent, sentiment, keywords),
+            voice_fusion_for_ml (used by app.py to adjust ML level)
+        """
         cleaned_path = None
         try:
+            # ── 1. Decode audio to clean WAV ──────────────────────────────
             cleaned_path = self.preprocess_audio(audio_path)
 
+            # ── 2. Speech-to-text ─────────────────────────────────────────
             stt        = STT()
             stt_result = stt.convert_to_text(cleaned_path, language=lang)
 
@@ -412,22 +374,36 @@ class VoiceInputHandler:
                 raise RuntimeError(f"STT failed: {stt_result['error']}")
 
             transcript = stt_result.get("transcript", "")
-            print(f"[VoiceInputHandler] transcript='{transcript[:80]}'  lang={lang}", flush=True)
+            print(
+                f"[VoiceInputHandler] transcript='{transcript[:80]}'  lang={lang}",
+                flush=True,
+            )
 
+            # ── 3. NLU (NEW STEP — sits between STT and EmotionAnalyzer) ──
+            # This matches the class diagram: STT → NLU → EmotionAnalyzer
+            nlu        = NLU()
+            nlu_result = nlu.analyze(transcript, language=lang)
+
+            print(
+                f"[VoiceInputHandler] NLU: intent={nlu_result['intent']}  "
+                f"sentiment={nlu_result['sentiment']}  "
+                f"keywords={nlu_result['keywords']}",
+                flush=True,
+            )
+
+            # ── 4. Voice biomarker extraction ─────────────────────────────
             biomarker  = VoiceBiomarker()
             biomarker.extract_mfcc(cleaned_path)
             bio_result = biomarker.analyze_voice_emotion()
 
             print(
                 f"[VoiceInputHandler] biomarker: pitch={bio_result['pitch']:.1f} Hz  "
-                f"tone={bio_result['tone']:.5f}  emotion={bio_result['emotion_from_voice']}",
+                f"tone={bio_result['tone']:.5f}  "
+                f"emotion={bio_result['emotion_from_voice']}",
                 flush=True,
             )
 
-            # BUG 2 FIX: require BOTH silent acoustics AND empty transcript
-            # before short-circuiting to "neutral".
-            # Previously: pitch==0 AND tone < threshold  (ignored transcript)
-            # Now:        pitch==0 AND tone < threshold AND transcript==""
+            # ── 5. Silence check (requires BOTH silent acoustics AND empty transcript) ─
             is_truly_silent = (
                 bio_result["pitch"] == 0.0
                 and bio_result["tone"] < VoiceBiomarker.SILENCE_TONE_THRESHOLD
@@ -437,28 +413,54 @@ class VoiceInputHandler:
             if is_truly_silent:
                 print("[VoiceInputHandler] Confirmed silent → returning neutral.", flush=True)
                 return {
-                    "transcript":       "",
-                    "dominant_emotion": "neutral",
-                    "fusion":           {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
-                    "biomarkers": {
+                    "transcript":           "",
+                    "dominant_emotion":     "neutral",
+                    "fusion":               {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                    "biomarkers":           {
                         "pitch":     0.0,
                         "tone":      0.0,
                         "mfcc_mean": bio_result.get("mfcc_mean", 0.0),
                     },
+                    "nlu":                  nlu_result,
+                    "voice_fusion_for_ml":  {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
                 }
 
+            # ── 6. Emotion classification (with NLU boost) ────────────────
             analyzer   = EmotionAnalyzer()
-            emo_result = analyzer.classify_emotion(transcript, bio_result, language=lang)
+            emo_result = analyzer.classify_emotion(
+                transcript,
+                bio_result,
+                language=lang,
+                nlu_result=nlu_result,   # ← pass NLU output into EmotionAnalyzer
+            )
+
+            fusion = emo_result["fusion"]
+
+            # voice_fusion_for_ml is what app.py reads to adjust ML prediction.
+            # It is the final emotion fusion scores AFTER all processing.
+            voice_fusion_for_ml = {
+                "anxiety": fusion.get("anxiety", 0.0),
+                "stress":  fusion.get("stress",  0.0),
+                "sadness": fusion.get("sadness", 0.0),
+            }
 
             return {
-                "transcript":       transcript,
-                "dominant_emotion": emo_result["final_emotion_label"],
-                "fusion":           emo_result["fusion"],
+                "transcript":          transcript,
+                "dominant_emotion":    emo_result["final_emotion_label"],
+                "fusion":              fusion,
                 "biomarkers": {
                     "pitch":     bio_result["pitch"],
                     "tone":      bio_result["tone"],
                     "mfcc_mean": bio_result.get("mfcc_mean", 0.0),
                 },
+                # NLU result exposed for frontend display (intent, sentiment, keywords)
+                "nlu":                 {
+                    "intent":    nlu_result["intent"],
+                    "sentiment": nlu_result["sentiment"],
+                    "keywords":  nlu_result["keywords"],
+                },
+                # Used by app.py /chat features stage to adjust ML level
+                "voice_fusion_for_ml": voice_fusion_for_ml,
             }
 
         except Exception as exc:
@@ -466,11 +468,13 @@ class VoiceInputHandler:
             print(f"[VoiceInputHandler] PIPELINE ERROR: {exc}", flush=True)
             traceback.print_exc()
             return {
-                "error":            str(exc),
-                "transcript":       "",
-                "dominant_emotion": "unknown",
-                "fusion":           {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
-                "biomarkers":       {"pitch": 0.0, "tone": 0.0, "mfcc_mean": 0.0},
+                "error":               str(exc),
+                "transcript":          "",
+                "dominant_emotion":    "unknown",
+                "fusion":              {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                "biomarkers":          {"pitch": 0.0, "tone": 0.0, "mfcc_mean": 0.0},
+                "nlu":                 {"intent": "neutral", "sentiment": "neutral", "keywords": {}},
+                "voice_fusion_for_ml": {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
             }
 
         finally:

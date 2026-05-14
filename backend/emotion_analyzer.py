@@ -1,49 +1,31 @@
-# emotion_analyzer.py — FIXED v5
+# emotion_analyzer.py — FIXED v6
 #
-# BUGS FIXED vs v4:
+# CHANGES vs v5:
 # ─────────────────────────────────────────────────────────────────────────────
-# MULTILINGUAL FALLBACK — run Urdu text directly through multilingual model
-#   when MarianMT translation is unavailable (which is the common case).
+# NLU INTEGRATION (new):
+#   classify_emotion() now accepts an optional nlu_result dict produced by
+#   NLU.analyze(). When present it:
+#     1. Applies keyword boosts to the fused emotion scores
+#        (e.g. user said "panic attack" → anxiety_boost=0.16 added)
+#     2. Reduces all scores if intent="denial" (user said "I do NOT feel anxious")
+#     3. Caps excitement if intent="distress" (stops "joy" winning when
+#        the user is clearly in distress)
 #
-#   v4 problem: if MarianMT is not installed, text_is_empty=True for ALL Urdu
-#   recordings → voice-only path always runs → for "anxious" voice the result
-#   is correct (0.55 anxiety), but there's no text contribution at all, which
-#   means the output ignores everything the person actually said.
-#
-#   FIX: Added Strategy C — multilingual-e5-small fallback classifier.
-#   Pipeline:
-#     1. Try MarianMT Urdu→English translation (Strategy A)
-#     2. If unavailable, try multilingual zero-shot classifier (Strategy B):
-#          model: "facebook/bart-large-mnli" — English only, skip for Urdu
-#        OR multilingual-e5-small sentence embeddings with emotion templates
-#     3. If both unavailable, voice-only (Strategy C, same as before)
-#
-#   Practical solution used here: if translation fails, try to run the
-#   Urdu text directly through the existing English classifier.
-#   DistilRoBERTa does NOT support Urdu natively, BUT it still produces
-#   non-uniform scores for Urdu input (BPE tokenizer processes the unicode
-#   characters and the model weights assign some score structure).
-#   This is better than all-zero text scores.
-#   A warning is printed and the result is weighted lower (voice_weight=0.65)
-#   to reflect the reduced reliability.
-#
-# CLEANED UP — removed all v3→v4 diff comments to keep the file readable.
-# ALL LOGIC IDENTICAL TO v4 otherwise.
+# ALL EXISTING LOGIC UNCHANGED. NLU result is fully optional — if not
+# supplied the method behaves exactly as v5.
 # ─────────────────────────────────────────────────────────────────────────────
 
 from transformers import pipeline as hf_pipeline
 
-
 class EmotionAnalyzer:
     """
-    Classifies emotion from text + voice biomarkers.
+    Classifies emotion from text + voice biomarkers + (optionally) NLU output.
 
     Language support:
-      English — full text classification + voice fusion.
+      English — full text classification + voice fusion + NLU boost.
       Urdu    — Strategy A: translate → classify (best).
-                Strategy B: run Urdu text directly through classifier (fallback,
-                            lower text weight).
-                Strategy C: voice-only if classifier is also unavailable.
+                Strategy B: run Urdu text directly through classifier (fallback).
+                Strategy C: voice-only if classifier unavailable.
 
     Output labels:
         "anxious" | "stressed" | "depressed" | "sad" | "excited" | "neutral"
@@ -54,14 +36,12 @@ class EmotionAnalyzer:
     _MODEL_NAME  = "j-hartmann/emotion-english-distilroberta-base"
     _TRANS_MODEL = "Helsinki-NLP/opus-mt-ur-en"
 
-    # Per-emotion detection thresholds.
-    # Lower for clinical negative emotions, higher for joy (needs text support).
     _THRESHOLDS = {
-        "anxious":  0.06,
-        "stressed": 0.06,
-        "sad":      0.07,
-        "depressed": 0.05,   # quiet speakers → be sensitive
-        "excited":  0.15,    # requires strong text signal
+        "anxious":   0.06,
+        "stressed":  0.06,
+        "sad":       0.07,
+        "depressed": 0.05,
+        "excited":   0.15,
     }
     _DEFAULT_THRESHOLD            = 0.08
     _DEPRESSION_SADNESS_THRESHOLD = 0.05
@@ -90,8 +70,8 @@ class EmotionAnalyzer:
                 print("[EmotionAnalyzer] Urdu→English translator loaded.", flush=True)
             except Exception as e:
                 print(
-                    f"[EmotionAnalyzer] Urdu→English translator unavailable ({e}). "
-                    "Will try direct Urdu classification as fallback.",
+                    f"[EmotionAnalyzer] Translator unavailable ({e}). "
+                    "Will use direct Urdu classification.",
                     flush=True,
                 )
                 cls._translator = False
@@ -101,7 +81,8 @@ class EmotionAnalyzer:
         self.final_emotion_label: str   = "neutral"
         self.sentiment_score:     float = 0.0
 
-    # ── _translate_urdu ───────────────────────────────────────────────────────
+    # ── translation helper ────────────────────────────────────────────────────
+
     @classmethod
     def _translate_urdu_to_english(cls, urdu_text: str) -> str:
         translator = cls._get_translator()
@@ -111,7 +92,8 @@ class EmotionAnalyzer:
             result  = translator(urdu_text[:512])
             en_text = result[0].get("translation_text", "").strip()
             print(
-                f"[EmotionAnalyzer] Urdu→English: '{urdu_text[:60]}' → '{en_text[:60]}'",
+                f"[EmotionAnalyzer] Urdu→English: "
+                f"'{urdu_text[:60]}' → '{en_text[:60]}'",
                 flush=True,
             )
             return en_text
@@ -120,23 +102,23 @@ class EmotionAnalyzer:
             return ""
 
     # ── classify_emotion ──────────────────────────────────────────────────────
+
     def classify_emotion(
         self,
         text:             str,
         biomarker_result: dict = None,
         language:         str  = "en",
+        nlu_result:       dict = None,   # ← NEW: optional NLU output
     ) -> dict:
         """
-        Classify emotion from transcript + voice biomarkers.
+        Classify emotion from transcript + voice biomarkers + NLU signals.
 
         Parameters
         ----------
-        text : str
-            Transcript (may be empty). For Urdu, pass Arabic-script text.
-        biomarker_result : dict | None
-            Output of VoiceBiomarker.analyze_voice_emotion().
-        language : str
-            "en" for English, "ur" for Urdu.
+        text             : str       — transcript (may be empty)
+        biomarker_result : dict|None — output of VoiceBiomarker.analyze_voice_emotion()
+        language         : str       — "en" or "ur"
+        nlu_result       : dict|None — output of NLU.analyze() [optional]
 
         Returns
         -------
@@ -159,23 +141,14 @@ class EmotionAnalyzer:
         # ── Step 1: prepare text ──────────────────────────────────────────
         text_for_classification = text.strip()
         text_is_empty           = not text_for_classification
-
-        # Track whether text classification is reliable.
-        # "reliable" = English text or successfully translated Urdu.
-        # "degraded" = raw Urdu fed to English classifier (lower text weight).
-        text_reliability = "reliable"
+        text_reliability        = "reliable"
 
         if language == "ur" and text_for_classification:
-            # Strategy A: translate → classify
             translated = self._translate_urdu_to_english(text_for_classification)
             if translated:
                 text_for_classification = translated
                 print("[EmotionAnalyzer] Strategy A: translated Urdu → English.", flush=True)
             else:
-                # Strategy B: run Urdu directly through English classifier.
-                # DistilRoBERTa processes Urdu unicode via BPE and produces
-                # non-uniform scores — better than all-zero but less reliable.
-                # We flag it as "degraded" to reduce text weight in fusion.
                 text_reliability = "degraded"
                 print(
                     "[EmotionAnalyzer] Strategy B: running Urdu text directly "
@@ -205,7 +178,10 @@ class EmotionAnalyzer:
                     flush=True,
                 )
             except Exception as e:
-                print(f"[EmotionAnalyzer] Classifier failed: {e} — zero scores.", flush=True)
+                print(
+                    f"[EmotionAnalyzer] Classifier failed: {e} — zero scores.",
+                    flush=True,
+                )
                 text_scores = {
                     "sadness": 0.0, "anger":  0.0, "fear":     0.0,
                     "disgust": 0.0, "joy":    0.0, "surprise": 0.0,
@@ -230,7 +206,6 @@ class EmotionAnalyzer:
             voice_weight = 1.0
             text_weight  = 0.0
         elif text_reliability == "degraded":
-            # Urdu fed directly to English model — reduce text influence.
             voice_weight = 0.65
             text_weight  = 0.35
         elif voice_emotion != "neutral":
@@ -241,11 +216,6 @@ class EmotionAnalyzer:
             text_weight  = 0.70
 
         # ── Step 5: voice map ─────────────────────────────────────────────
-        # KEY: "aroused" maps to anxiety+stress (NOT joy).
-        # In a mental-health context, high pitch + high energy is almost
-        # always anxiety/panic, not genuine excitement.
-        # Joy=0.05 is kept so that IF text strongly confirms joy, "excited"
-        # can still win — but it requires the high _THRESHOLDS["excited"]=0.15.
         _voice_map = {
             "aroused":   {"anxiety": 0.55, "stress": 0.25, "sadness": 0.0,  "joy": 0.05},
             "anxious":   {"anxiety": 1.0,  "stress": 0.0,  "sadness": 0.0,  "joy": 0.0 },
@@ -262,6 +232,52 @@ class EmotionAnalyzer:
         fused_sadness = min(text_weight * sadness_text + voice_weight * vm["sadness"], 1.0)
         fused_joy     = min(text_weight * joy_text     + voice_weight * vm["joy"],     1.0)
 
+        # ── Step 6: NLU boost (NEW) ───────────────────────────────────────
+        # Apply NLU signals on top of the fused scores.
+        # This is where clinical keywords, negation, and intent
+        # influence the final emotion classification.
+        if nlu_result:
+            intent          = nlu_result.get("intent",        "neutral")
+            anxiety_boost   = nlu_result.get("anxiety_boost", 0.0)
+            stress_boost    = nlu_result.get("stress_boost",  0.0)
+            sadness_boost   = nlu_result.get("sadness_boost", 0.0)
+            negation_found  = nlu_result.get("negation_found", False)
+
+            print(
+                f"[EmotionAnalyzer] NLU boost → "
+                f"intent={intent}  anxiety+={anxiety_boost}  "
+                f"stress+={stress_boost}  sadness+={sadness_boost}  "
+                f"negation={negation_found}",
+                flush=True,
+            )
+
+            if intent == "denial":
+                # User said "I do NOT feel anxious/stressed/sad"
+                # → halve all distress scores as the user is denying them
+                fused_anxiety *= 0.5
+                fused_stress  *= 0.5
+                fused_sadness *= 0.5
+                print(
+                    "[EmotionAnalyzer] NLU denial intent → "
+                    "all distress scores halved.",
+                    flush=True,
+                )
+
+            elif intent == "distress":
+                # User explicitly said distress words without negation
+                # → add keyword boosts
+                fused_anxiety = min(fused_anxiety + anxiety_boost, 1.0)
+                fused_stress  = min(fused_stress  + stress_boost,  1.0)
+                fused_sadness = min(fused_sadness + sadness_boost,  1.0)
+                # Also cap joy — if user is distressed, "excited" winning is wrong
+                fused_joy     = min(fused_joy, 0.05)
+
+            elif intent == "help_seeking":
+                # User asking for help → treat as distress + boost anxiety/sadness
+                fused_anxiety = min(fused_anxiety + anxiety_boost + 0.05, 1.0)
+                fused_sadness = min(fused_sadness + sadness_boost + 0.05, 1.0)
+                fused_joy     = min(fused_joy, 0.05)
+
         fusion = {
             "anxiety": round(fused_anxiety, 3),
             "stress":  round(fused_stress,  3),
@@ -270,7 +286,7 @@ class EmotionAnalyzer:
         }
 
         print(
-            f"[EmotionAnalyzer] Fusion → "
+            f"[EmotionAnalyzer] Fusion (after NLU) → "
             f"anxiety={fused_anxiety:.3f}  stress={fused_stress:.3f}  "
             f"sadness={fused_sadness:.3f}  joy={fused_joy:.3f}  "
             f"(voice={voice_emotion}  lang={language}  "
@@ -279,7 +295,7 @@ class EmotionAnalyzer:
             flush=True,
         )
 
-        # ── Step 6: pick dominant emotion ─────────────────────────────────
+        # ── Step 7: pick dominant emotion ─────────────────────────────────
         scores_map = {
             "anxious":  fused_anxiety,
             "stressed": fused_stress,
@@ -294,8 +310,6 @@ class EmotionAnalyzer:
         if top_score < threshold:
             dominant = "neutral"
         else:
-            # Tie-break: anxiety vs stress within 0.02 → prefer "stressed"
-            # (stress is more common in everyday Pakistani context)
             if (
                 dominant == "anxious"
                 and abs(fused_anxiety - fused_stress) < 0.02
@@ -308,29 +322,16 @@ class EmotionAnalyzer:
                     flush=True,
                 )
 
-        # ── Step 7: depression upgrade ────────────────────────────────────
+        # ── Step 8: depression upgrade ────────────────────────────────────
         if (
             voice_emotion == "depressed"
             and fused_sadness > self._DEPRESSION_SADNESS_THRESHOLD
         ):
             dominant = "depressed"
-            print(
-                f"[EmotionAnalyzer] Depression upgrade: voice='depressed' + "
-                f"fused_sadness={fused_sadness:.3f} → 'depressed'",
-                flush=True,
-            )
 
-        # ── Step 8: voice-only aroused safety net ─────────────────────────
-        # If text was empty AND voice was "aroused" AND we somehow still got
-        # "excited" (e.g. threshold logic edge case), force "anxious".
-        # With the new voice_map, fused_anxiety=0.55 should always beat
-        # fused_joy=0.05 — this is a final safety net only.
+        # ── Step 9: voice-only aroused safety net ─────────────────────────
         if text_is_empty and voice_emotion == "aroused" and dominant == "excited":
             dominant = "anxious"
-            print(
-                "[EmotionAnalyzer] Safety net: aroused + no text → 'anxious'",
-                flush=True,
-            )
 
         self.final_emotion_label = dominant
         self.sentiment_score     = scores_map.get(dominant, fused_sadness)

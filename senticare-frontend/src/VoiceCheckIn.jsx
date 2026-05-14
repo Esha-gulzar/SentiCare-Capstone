@@ -1,19 +1,14 @@
-// VoiceCheckIn.jsx — FIXED v8
+// VoiceCheckIn.jsx — FIXED v10
 //
-// BUGS FIXED vs v7:
+// CHANGES vs v9:
 // ─────────────────────────────────────────────────────────────────────────────
-// BUG 7 FIX — Emotion labels always showed English regardless of language.
-//   EMOTION_META had hardcoded English strings ("Anxious", "Excited", etc).
-//   FIX: Replaced static EMOTION_META object with getEmotionMeta(lang)
-//   function that returns Urdu labels when lang="ur".
+// FIX — intentLabels map now includes "positive_engagement" (new NLU intent).
+//   Previously the map only had distress / denial / help_seeking / neutral.
+//   When NLU returned "positive_engagement" the UI fell through to the raw
+//   key string and displayed it unstyled. Now it shows "Positive" (EN) or
+//   "خوشگوار" (UR) correctly.
 //
-// BUG 8 FIX — autoGainControl + noiseSuppression + echoCancellation were ON.
-//   Browser AGC was boosting mic gain before audio reached Python pipeline.
-//   Combined with volume=8.0 in ffmpeg → double amplification → pitch always
-//   ~280 Hz, tone always "Very loud" → always classified as "aroused"/"excited".
-//   FIX: All three set to false so raw audio reaches the backend unmodified.
-//
-// ALL OTHER CODE IDENTICAL TO v7.
+// ALL OTHER CODE IDENTICAL TO v9.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useCallback } from "react";
@@ -23,7 +18,7 @@ import "./VoiceCheckIn.css";
 const MAX_RECORD_MS = 30_000;
 const MIN_RECORD_MS = 2_000;
 
-// BUG 7 FIX: language-aware emotion labels
+// Language-aware emotion labels
 const getEmotionMeta = (lang) => ({
   anxious:   { emoji: "😰", cls: "vc-em-anxious",   label: lang === "ur" ? "گھبراہٹ"     : "Anxious"   },
   stressed:  { emoji: "😤", cls: "vc-em-stressed",  label: lang === "ur" ? "دباؤ"        : "Stressed"  },
@@ -47,7 +42,6 @@ const fmtTone  = (v) => {
 const pitchPct = (hz) => Math.min(100, Math.max(0, ((hz - 80) / 320) * 100));
 const tonePct  = (v)  => Math.min(100, Math.max(0, (v / 0.12) * 100));
 
-// Pick the best supported MIME type for this browser
 function getBestMimeType() {
   const types = [
     "audio/webm;codecs=opus",
@@ -89,8 +83,6 @@ export default function VoiceCheckIn({
   const maxTimerRef      = useRef(null);
 
   const isUrdu = lang === "ur";
-
-  // BUG 7 FIX: build EMOTION_META from lang so labels are in correct language
   const EMOTION_META = getEmotionMeta(lang);
 
   const L = {
@@ -115,6 +107,8 @@ export default function VoiceCheckIn({
     sadness_lbl:    isUrdu ? "اداسی"                                             : "Sadness",
     depression_lbl: isUrdu ? "ڈپریشن"                                            : "Depression",
     joy_lbl:        isUrdu ? "خوشی"                                              : "Joy",
+    intent_lbl:     isUrdu ? "ارادہ"                                             : "Intent",
+    sentiment_lbl:  isUrdu ? "جذباتی رجحان"                                      : "Sentiment",
     nothing:        isUrdu ? "(کچھ نہیں سنا گیا)"                               : "(nothing detected — please speak louder)",
     err_label:      isUrdu ? "خرابی:"                                            : "Error:",
     err_silent:     isUrdu
@@ -145,10 +139,6 @@ export default function VoiceCheckIn({
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          // BUG 8 FIX: all three disabled so browser does NOT pre-process
-          // the audio before it reaches the Python pipeline.
-          // autoGainControl=true was doubling the ffmpeg volume amplification
-          // → pitch always ~280 Hz → tone always "Very loud" → always "aroused".
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl:  false,
@@ -172,24 +162,18 @@ export default function VoiceCheckIn({
     streamRef.current = stream;
 
     const mimeType = getBestMimeType();
-    console.log(`[VoiceCheckIn] Using MediaRecorder mimeType: "${mimeType || '(browser default)'}"`);
-
     const recorderOptions = mimeType ? { mimeType } : {};
     let mr;
     try {
       mr = new MediaRecorder(stream, recorderOptions);
     } catch (e) {
-      console.warn("[VoiceCheckIn] MediaRecorder with mimeType failed, using default:", e);
       mr = new MediaRecorder(stream);
     }
 
     mediaRecorderRef.current = mr;
 
     mr.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        chunksRef.current.push(e.data);
-        console.log(`[VoiceCheckIn] chunk: ${e.data.size} bytes`);
-      }
+      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
     };
 
     mr.onstop = async () => {
@@ -198,7 +182,6 @@ export default function VoiceCheckIn({
 
       const allChunks = chunksRef.current;
       const totalSize = allChunks.reduce((s, c) => s + c.size, 0);
-      console.log(`[VoiceCheckIn] MediaRecorder stopped. Total: ${totalSize} bytes, chunks: ${allChunks.length}`);
 
       if (totalSize < 1000) {
         setErrorMsg(L.err_silent);
@@ -209,8 +192,6 @@ export default function VoiceCheckIn({
       const actualMime = mr.mimeType || mimeType || "audio/webm";
       const ext        = mimeToExt(actualMime);
       const blob       = new Blob(allChunks, { type: actualMime });
-
-      console.log(`[VoiceCheckIn] Sending blob: ${blob.size} bytes, type: ${actualMime}, ext: ${ext}`);
 
       try {
         const data = await sendVoiceIntro(blob, ext, sessionId, lang);
@@ -236,9 +217,7 @@ export default function VoiceCheckIn({
   const stopRecording = useCallback(() => {
     if (maxTimerRef.current) { clearTimeout(maxTimerRef.current); maxTimerRef.current = null; }
     const mr = mediaRecorderRef.current;
-    if (mr && mr.state === "recording") {
-      mr.stop();
-    }
+    if (mr && mr.state === "recording") mr.stop();
   }, []);
 
   const reset = () => {
@@ -254,11 +233,27 @@ export default function VoiceCheckIn({
   const emo           = EMOTION_META[result?.dominant_emotion] || EMOTION_META.unknown;
   const fusion        = result?.fusion     || {};
   const bio           = result?.biomarkers || {};
+  const nlu           = result?.nlu        || {};
   const anxietyPct    = Math.round((fusion.anxiety    || 0) * 100);
   const stressPct     = Math.round((fusion.stress     || 0) * 100);
   const sadnessPct    = Math.round((fusion.sadness    || 0) * 100);
   const depressionPct = Math.round((fusion.depression || 0) * 100);
   const joyPct        = Math.round((fusion.joy        || 0) * 100);
+
+  // ── FIX: added positive_engagement to intentLabels ───────────────────────
+  const intentLabels = {
+    distress:            isUrdu ? "تکلیف میں ہیں"    : "Distress",
+    denial:              isUrdu ? "انکار"            : "Denial",
+    help_seeking:        isUrdu ? "مدد مانگ رہے ہیں" : "Help-seeking",
+    positive_engagement: isUrdu ? "خوشگوار"          : "Positive",   // ← NEW
+    neutral:             isUrdu ? "معمول"            : "Neutral",
+  };
+
+  const sentimentLabels = {
+    positive: isUrdu ? "مثبت"  : "Positive",
+    negative: isUrdu ? "منفی"  : "Negative",
+    neutral:  isUrdu ? "معمول" : "Neutral",
+  };
 
   return (
     <div className={`vc-root ${isRTL ? "vc-rtl" : ""}`}>
@@ -306,6 +301,7 @@ export default function VoiceCheckIn({
         {status === "done" && result && (
           <div className="vc-result-panel">
 
+            {/* Transcript */}
             <div className="vc-result-section">
               <div className="vc-result-label">{L.transcript}</div>
               <div className="vc-transcript-box">
@@ -315,6 +311,7 @@ export default function VoiceCheckIn({
               </div>
             </div>
 
+            {/* Dominant emotion */}
             <div className="vc-result-section">
               <div className="vc-result-label">{L.emotion}</div>
               <div className={`vc-emotion-big ${emo.cls}`}>
@@ -323,6 +320,29 @@ export default function VoiceCheckIn({
               </div>
             </div>
 
+            {/* NLU intent + sentiment */}
+            {(nlu.intent || nlu.sentiment) && (
+              <div className="vc-result-section vc-two-col">
+                {nlu.intent && (
+                  <div className="vc-biomarker-box">
+                    <div className="vc-result-label">{L.intent_lbl}</div>
+                    <div className="vc-bar-value" style={{ fontWeight: 700, fontSize: "0.85rem" }}>
+                      {intentLabels[nlu.intent] ?? nlu.intent}
+                    </div>
+                  </div>
+                )}
+                {nlu.sentiment && (
+                  <div className="vc-biomarker-box">
+                    <div className="vc-result-label">{L.sentiment_lbl}</div>
+                    <div className="vc-bar-value" style={{ fontWeight: 700, fontSize: "0.85rem" }}>
+                      {sentimentLabels[nlu.sentiment] ?? nlu.sentiment}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Pitch + tone */}
             <div className="vc-result-section vc-two-col">
               <div className="vc-biomarker-box">
                 <div className="vc-result-label">{L.pitch_label}</div>
@@ -342,6 +362,7 @@ export default function VoiceCheckIn({
               </div>
             </div>
 
+            {/* Emotional signals (fusion) */}
             <div className="vc-result-section">
               <div className="vc-result-label">{L.fusion_title}</div>
               {[

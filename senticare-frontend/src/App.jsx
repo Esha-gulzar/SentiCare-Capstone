@@ -1,3 +1,27 @@
+// App.jsx — FIXED v2
+//
+// CHANGES vs v1:
+// ─────────────────────────────────────────────────────────────────────────────
+// VOICE FUSION STORED + SENT TO BACKEND (required pipeline fix):
+//
+//   Required pipeline:
+//     Voice check-in → voice_fusion stored in session state
+//     → sent with every /chat POST as "voice_fusion"
+//     → app.py fuses it with feature answers before ML prediction
+//
+//   Changes:
+//   1. MainApp now holds [voiceFusion, setVoiceFusion] state.
+//   2. handleVoiceCheckInComplete(result) extracts
+//      result.voice_fusion_for_ml and stores it in voiceFusion state.
+//   3. Every sendMessage() call now includes voice_fusion in the POST body.
+//   4. startNewChat() resets voiceFusion to null (clean slate for new session).
+//
+// VoiceCheckIn onComplete now receives FULL result (was already true in v8/v9)
+//   so no change to the prop signature — we just use result.voice_fusion_for_ml.
+//
+// ALL OTHER CODE IDENTICAL TO v1 / the original you provided.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip,
@@ -322,7 +346,6 @@ const DAILY_TIPS_UR = [
   "اگر مشکل ہو تو کسی قابل اعتماد شخص سے بات کریں — آپ اکیلے نہیں ہیں۔",
 ];
 
-// ── PPO helper ──────────────────────────────────────────────────
 const levelToNum = (level) =>
   level === "high" ? 3 : level === "medium" ? 2 : 1;
 
@@ -545,7 +568,7 @@ function SidebarContent({ user, page, setPage, sessions, lang, voiceOn, setVoice
 }
 
 // ════════════════════════════════════════════════════════════════
-//  FEATURE 5 — EMOTION TREND CHART
+//  EMOTION TREND CHART
 // ════════════════════════════════════════════════════════════════
 function EmotionTrendChart({ sessions, lang }) {
   const t = UI[lang];
@@ -679,13 +702,18 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { toasts, show: showToast } = useToast();
 
-  // ── FEATURE 4: PPO STATE ──────────────────────────────────────
+  // ── PPO STATE ──────────────────────────────────────────────────
   const [feedback, setFeedback] = useState({});
   const [thumbsDownCount, setThumbsDownCount] = useState(0);
   const [policyMode, setPolicyMode] = useState("default");
 
   // ── VOICE CHECK-IN STATE ──────────────────────────────────────
   const [voiceCheckInDone, setVoiceCheckInDone] = useState(false);
+
+  // ── VOICE FUSION STATE (NEW — required pipeline) ─────────────
+  // Stores the voice_fusion_for_ml scores from the VoiceCheckIn result.
+  // Sent with every /chat POST so app.py can fuse them with ML features.
+  const [voiceFusion, setVoiceFusion] = useState(null);
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
@@ -700,7 +728,23 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isTyping]);
   useEffect(() => { if (inputError) setInputError(""); }, [input]);
 
-  // ── FEATURE 4: PPO FEEDBACK HANDLER ──────────────────────────
+  // ── Handle voice check-in completion ─────────────────────────
+  // Called by VoiceCheckIn when user clicks "Continue to chat"
+  // result is the FULL pipeline response from /voice-intro
+  const handleVoiceCheckInComplete = useCallback((result) => {
+    // Extract and store the voice fusion scores for ML fusion
+    if (result && result.voice_fusion_for_ml) {
+      setVoiceFusion(result.voice_fusion_for_ml);
+      console.log(
+        "[App] Voice fusion stored:",
+        result.voice_fusion_for_ml,
+        "dominant:", result.dominant_emotion,
+      );
+    }
+    setVoiceCheckInDone(true);
+  }, []);
+
+  // ── PPO feedback handler ──────────────────────────────────────
   const handleFeedback = useCallback((msgIdx, type) => {
     if (feedback[msgIdx]) return;
     setFeedback(prev => ({ ...prev, [msgIdx]: type }));
@@ -780,7 +824,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   const openPopup = (text) => setPopup({ text, card: parseTherapyCard(text) });
   const closePopup = () => { stopAudio(); setPopupSpeaking(false); setPopupTtsLoading(false); setPopup(null); };
 
-  // ── Core send ─────────────────────────────────────────────────
+  // ── Core send (voice_fusion included in every POST) ───────────
   const sendMessage = async (text) => {
     setIsTyping(true);
     setCurrentOptions(null);
@@ -790,7 +834,15 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, input: text, lang, policy_mode: policyMode }),
+        body: JSON.stringify({
+          session_id:   sessionId,
+          input:        text,
+          lang,
+          policy_mode:  policyMode,
+          // ← REQUIRED PIPELINE: send voice fusion with every message
+          // app.py stores/uses it for ML level adjustment
+          voice_fusion: voiceFusion || null,
+        }),
       });
       const data = await res.json();
       const firstOptions = data.options || null;
@@ -802,7 +854,13 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
           const res2 = await fetch(API_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: sessionId, input: "", lang, policy_mode: policyMode }),
+            body: JSON.stringify({
+              session_id:   sessionId,
+              input:        "",
+              lang,
+              policy_mode:  policyMode,
+              voice_fusion: voiceFusion || null,
+            }),
           });
           const data2 = await res2.json();
           const q1opts = data2.options || null;
@@ -917,7 +975,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     showToast(t.toast_all_del);
   };
 
-  // ── startNewChat — resets voice check-in too ──────────────────
+  // ── startNewChat — resets all session state including voice fusion ─
   const startNewChat = () => {
     stopAudio();
     setMessages([]);
@@ -925,7 +983,8 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     setFeedback({});
     setThumbsDownCount(0);
     setPolicyMode("default");
-    setVoiceCheckInDone(false);   // ← resets voice check-in for next session
+    setVoiceCheckInDone(false);
+    setVoiceFusion(null);          // ← reset voice fusion for clean new session
     sessionSaved.current = false;
     setPage("chat");
   };
@@ -995,18 +1054,18 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
             </div>
 
             <div className="messages-area">
-              {/* ── VOICE CHECK-IN: shown before any messages, before quick-start ── */}
+              {/* VOICE CHECK-IN: shown before any messages */}
               {messages.length === 0 && !voiceCheckInDone && (
                 <VoiceCheckIn
                   sessionId={sessionId}
                   lang={lang}
                   isRTL={isRTL}
-                  onComplete={() => setVoiceCheckInDone(true)}
+                  onComplete={handleVoiceCheckInComplete}
                   onSkip={() => setVoiceCheckInDone(true)}
                 />
               )}
 
-              {/* ── EMPTY STATE: shown after voice check-in is done ── */}
+              {/* EMPTY STATE: shown after voice check-in is done */}
               {messages.length === 0 && voiceCheckInDone && (
                 <div className="empty-state">
                   <div className="empty-icon-wrap">🌱</div>
