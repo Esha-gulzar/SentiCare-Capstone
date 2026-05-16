@@ -1,4 +1,3 @@
-cat > Dockerfile << 'EOF'
 FROM python:3.10
 
 WORKDIR /app
@@ -13,4 +12,3 @@ COPY . .
 EXPOSE 7860
 
 CMD ["gunicorn", "--bind", "0.0.0.0:7860", "app:app"]
-EOF
