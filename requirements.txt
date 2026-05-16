@@ -1,4 +1,3 @@
-cat > requirements.txt << 'EOF'
 flask
 flask-cors
 edge-tts
@@ -9,4 +8,3 @@ pandas
 scikit-learn
 requests
 gunicorn
-EOF
