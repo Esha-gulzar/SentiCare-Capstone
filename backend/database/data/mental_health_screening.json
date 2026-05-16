@@ -1,0 +1,68 @@
+{
+  "questions": [
+    {
+      "id": "feeling_nervous",
+      "domain": "anxiety",
+      "question_en": "Over the past two weeks, how often have you felt nervous, anxious, or on edge?",
+      "question_ur": "گزشتہ دو ہفتوں میں، آپ کتنی بار گھبراہٹ، بے چینی یا پریشانی محسوس کرتے رہے؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "uncontrollable_worry",
+      "domain": "anxiety",
+      "question_en": "How often have you been unable to stop or control worrying?",
+      "question_ur": "آپ کتنی بار فکروں کو روک یا کنٹرول نہیں کر پائے؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "restlessness",
+      "domain": "anxiety",
+      "question_en": "How often have you felt restless or hard to relax?",
+      "question_ur": "آپ کتنی بار بے چین یا سکون میں رہنا مشکل محسوس ہوا؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "feeling_down",
+      "domain": "depression",
+      "question_en": "How often have you felt down, depressed, or hopeless?",
+      "question_ur": "آپ کتنی بار اداسی، مایوسی یا ناامیدی محسوس کی؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "loss_of_interest",
+      "domain": "depression",
+      "question_en": "How often have you had little interest or pleasure in doing things?",
+      "question_ur": "آپ کتنی بار کسی کام میں دلچسپی یا خوشی محسوس نہیں ہوئی؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "fatigue",
+      "domain": "depression",
+      "question_en": "How often have you felt tired or low in energy?",
+      "question_ur": "آپ کتنی بار تھکاوٹ یا توانائی کی کمی محسوس کی؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "overwhelmed",
+      "domain": "stress",
+      "question_en": "How often have you felt overwhelmed or unable to cope with daily responsibilities?",
+      "question_ur": "آپ کتنی بار اپنی روزمرہ ذمہ داریاں نبھانے میں خود کو ناکارہ محسوس کیا؟",
+      "min": 0,
+      "max": 3
+    },
+    {
+      "id": "irritability",
+      "domain": "stress",
+      "question_en": "How often have you been easily irritated or frustrated?",
+      "question_ur": "آپ کتنی بار جلدی چڑچڑاپن یا غصہ محسوس کیا؟",
+      "min": 0,
+      "max": 3
+    }
+  ]
+}

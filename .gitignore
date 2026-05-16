@@ -1,0 +1,15 @@
+# Node dependencies (VERY IMPORTANT)
+senticare-frontend/node_modules/
+senticare-frontend/build/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment files
+.env
+
+

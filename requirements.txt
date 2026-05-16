@@ -1,0 +1,12 @@
+cat > requirements.txt << 'EOF'
+flask
+flask-cors
+edge-tts
+pymongo
+numpy
+joblib
+pandas
+scikit-learn
+requests
+gunicorn
+EOF
