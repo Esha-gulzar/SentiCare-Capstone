@@ -13,3 +13,15 @@ __pycache__/
 .env
 
 
+cat > .gitignore << 'EOF'
+Design Document/
+Presentation/
+SentiCare Diagrams/
+SentiCare SRS/
+SentiCare SRS.pdf
+proposal/
+__pycache__/
+*.pyc
+.venv/
+*.log
+EOF
