@@ -158,7 +158,7 @@ _STRESS_SHORT_TO_FULL: dict[str, str] = {
     "physical_activity":      "Physical Activity Level",
     "occupation":             "Occupation",
     "blood_pressure":         "Blood Pressure",
-    "heart_rate":             "Heart Rate",
+     "heart_rate":             "Heart Rate",
     "daily_steps":            "Daily Steps",
     "sleep_disorder":         "Sleep Disorder",
 }

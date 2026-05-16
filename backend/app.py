@@ -1,24 +1,17 @@
-# app.py — v12
+# app.py — v13
 #
-# CHANGES vs v11:
+# CHANGES vs v12:
 # ─────────────────────────────────────────────────────────────────────────────
-# FIX: Questions being skipped silently.
+# ADDED: MongoDB Atlas integration via db.py
 #
-# ROOT CAUSE:
-#   validate_feature_input() was returning True for blank ("") input on
-#   radio/select/slider types — so questions got "answered" with "" and
-#   the feature_index advanced without the user actually answering.
+# What gets saved:
+#   • sessions        — after /voice-intro completes
+#   • biomarkers      — pitch, tone, mfcc, emotion scores
+#   • chat_history    — every user + assistant message
+#   • predictions     — ML result, fusion mode, CBT level
+#   • feedback        — thumbs up / thumbs down signals
 #
-# FIXES APPLIED:
-#   1. validate_feature_input() — added blank input guard at the top.
-#      Any empty/whitespace-only input is immediately rejected and the
-#      question is re-sent, for ALL input types.
-#
-#   2. features stage in chat() — added early-return guard: if user_input
-#      is blank when we enter the features stage, re-send the current
-#      question without advancing the index.
-#
-# ALL OTHER LOGIC IDENTICAL TO v11.
+# ALL OTHER LOGIC IDENTICAL TO v12.
 # ─────────────────────────────────────────────────────────────────────────────
 
 from flask import Flask, request, jsonify, Response, stream_with_context
@@ -29,7 +22,6 @@ from backend.chatbot.emotion_fusion_combiner import EmotionFusionCombiner
 from backend.chatbot.questions.anxiety_questions    import ANXIETY_FEATURE_QUESTIONS
 from backend.chatbot.questions.stress_questions     import STRESS_FEATURE_QUESTIONS
 from backend.chatbot.questions.depression_questions import DEPRESSION_FEATURE_QUESTIONS
-
 import edge_tts
 import asyncio
 import io
@@ -41,6 +33,19 @@ import traceback as _tb
 
 from backend.voice_input_handler import VoiceInputHandler
 from backend.stt import STT
+
+
+# ── MongoDB helpers ───────────────────────────────────────────────────────────
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from db import (
+    save_session,
+    save_biomarkers,
+    save_chat_message,
+    save_prediction,
+    save_feedback,
+)
+
 
 
 app = Flask(__name__)
@@ -133,6 +138,24 @@ def voice_intro():
         })
         sess["voice_fusion"]   = result.get("voice_fusion_for_ml", {})
         sess["voice_dominant"] = result.get("dominant_emotion", "neutral")
+
+        # ── MongoDB: save session + biomarkers ────────────────────────────
+        try:
+            save_session(
+                session_id,
+                lang,
+                sess["voice_dominant"],
+                sess["voice_fusion"],
+            )
+            save_biomarkers(
+                session_id,
+                result.get("biomarkers", {}),
+                result.get("fusion", {}),
+            )
+            print(f"[voice-intro] ✅ MongoDB saved session + biomarkers", flush=True)
+        except Exception as db_exc:
+            print(f"[voice-intro] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+        # ─────────────────────────────────────────────────────────────────
 
         print(
             f"[voice-intro] Stored → "
@@ -375,10 +398,8 @@ def validate_feature_input(raw: str, q: dict, lang: str):
     itype = q["input_type"]
     q_txt = q["question_ur"] if lang == "ur" else q["question_en"]
 
-    # ── FIX 1: reject completely blank input for ALL types ────────────────
     if not val:
         return False, None, f"⚠️ {ui('err_required', lang)}\n👉 {q_txt}"
-    # ─────────────────────────────────────────────────────────────────────
 
     if itype in ("number", "slider"):
         try:
@@ -428,7 +449,6 @@ def _map_level(prediction, condition: str) -> str:
     try:
         val = int(float(str(prediction)))
         if condition == "stress":
-            # Stress model: 0=high, 1=medium, 2=low (inverted)
             return {0: "high", 1: "medium", 2: "low"}.get(val, "medium")
         return {0: "low", 1: "medium", 2: "high"}.get(val, "medium")
     except (TypeError, ValueError):
@@ -616,13 +636,22 @@ def chat():
     # ── GREETING ──────────────────────────────────────────────────────────────
     if sess["stage"] == "greeting":
         sess["stage"] = "pre_screening"
-        return jsonify({"message": ui("greeting", lang), "stage": "pre_screening"})
+        msg = ui("greeting", lang)
+        try:
+            save_chat_message(session_id, "greeting", "assistant", msg)
+        except Exception as db_exc:
+            print(f"[chat/greeting] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+        return jsonify({"message": msg, "stage": "pre_screening"})
 
     # ── PRE-SCREENING ─────────────────────────────────────────────────────────
     if sess["stage"] == "pre_screening":
         sess["stage"]           = "screening"
         sess["screening_index"] = 0
         q = _screening_q(0, lang)
+        try:
+            save_chat_message(session_id, "pre_screening", "assistant", q["question"])
+        except Exception as db_exc:
+            print(f"[chat/pre_screening] ⚠️  MongoDB save failed: {db_exc}", flush=True)
         return jsonify({"message": q["question"], "options": q["options"]})
 
     # ── SCREENING ─────────────────────────────────────────────────────────────
@@ -639,12 +668,22 @@ def chat():
                 "options": q["options"],
             })
 
+        # Save user answer to MongoDB
+        try:
+            save_chat_message(session_id, "screening", "user", user_input)
+        except Exception as db_exc:
+            print(f"[chat/screening] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+
         sess["screening_answers"][_SCREENING_QS[idx]["id"]] = val
         idx += 1
         sess["screening_index"] = idx
 
         if idx < len(_SCREENING_QS):
             q = _screening_q(idx, lang)
+            try:
+                save_chat_message(session_id, "screening", "assistant", q["question"])
+            except Exception as db_exc:
+                print(f"[chat/screening] ⚠️  MongoDB save failed: {db_exc}", flush=True)
             return jsonify({"message": q["question"], "options": q["options"]})
 
         scores    = engine.calculate_screening_scores(sess["screening_answers"])
@@ -653,15 +692,22 @@ def chat():
 
         if condition == "neutral":
             sess["stage"] = "done"
-            return jsonify({"message": ui("fallback", lang)})
+            msg = ui("fallback", lang)
+            try:
+                save_chat_message(session_id, "screening", "assistant", msg)
+            except Exception as db_exc:
+                print(f"[chat/screening] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+            return jsonify({"message": msg})
 
         sess["condition"] = condition
         sess["stage"]     = "thankyou"
         cond_label        = _condition_label(condition, lang)
-        return jsonify({
-            "message": ui("thank_you", lang, condition=cond_label),
-            "stage":   "thankyou",
-        })
+        msg = ui("thank_you", lang, condition=cond_label)
+        try:
+            save_chat_message(session_id, "thankyou", "assistant", msg)
+        except Exception as db_exc:
+            print(f"[chat/screening] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+        return jsonify({"message": msg, "stage": "thankyou"})
 
     # ── THANKYOU → first feature question ────────────────────────────────────
     if sess["stage"] == "thankyou":
@@ -670,7 +716,11 @@ def chat():
         condition = sess["condition"]
         questions = _feature_qs(condition)
         info      = _resolve_feature(questions[0], lang)
-        payload   = {"message": info["question"]}
+        try:
+            save_chat_message(session_id, "features", "assistant", info["question"])
+        except Exception as db_exc:
+            print(f"[chat/thankyou] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+        payload = {"message": info["question"]}
         if info["options"]:
             payload["options"] = info["options"]
         return jsonify(payload)
@@ -682,7 +732,6 @@ def chat():
         idx       = sess["feature_index"]
         current_q = questions[idx]
 
-        # ── FIX 2: if input is blank, re-send current question immediately ──
         if not user_input:
             print(
                 f"[chat/features] Blank input at idx={idx} "
@@ -694,7 +743,6 @@ def chat():
             if info["options"]:
                 payload["options"] = info["options"]
             return jsonify(payload)
-        # ────────────────────────────────────────────────────────────────────
 
         is_valid, cleaned, error_msg = validate_feature_input(
             user_input, current_q, lang
@@ -706,12 +754,22 @@ def chat():
                 payload["options"] = info["options"]
             return jsonify(payload)
 
+        # Save user feature answer
+        try:
+            save_chat_message(session_id, "features", "user", user_input)
+        except Exception as db_exc:
+            print(f"[chat/features] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+
         sess["feature_answers"][current_q["col"]] = cleaned
         idx += 1
         sess["feature_index"] = idx
 
         if idx < len(questions):
             info    = _resolve_feature(questions[idx], lang)
+            try:
+                save_chat_message(session_id, "features", "assistant", info["question"])
+            except Exception as db_exc:
+                print(f"[chat/features] ⚠️  MongoDB save failed: {db_exc}", flush=True)
             payload = {"message": info["question"]}
             if info["options"]:
                 payload["options"] = info["options"]
@@ -721,9 +779,10 @@ def chat():
         # ALL FEATURE QUESTIONS ANSWERED — begin fusion + prediction pipeline
         # ══════════════════════════════════════════════════════════════════════
         sess["stage"] = "done"
-        level         = "medium"   # safe default
+        level         = "medium"
         prediction    = None
         features      = dict(sess["feature_answers"])
+        combined      = {}
 
         # ══════════════════════════════════════════════════════════════════════
         # STAGE A — ML PREDICTION
@@ -827,6 +886,24 @@ def chat():
             print(f"[chat/stageC] ⚠️  build_cbt_message error: {exc}", flush=True)
             _tb.print_exc()
             cbt_text = ui("fallback", lang)
+
+        # ── MongoDB: save prediction + final CBT message ──────────────────
+        try:
+            screening_scores = engine.calculate_screening_scores(sess["screening_answers"])
+            save_prediction(
+                session_id       = session_id,
+                condition        = condition,
+                level            = level,
+                screening_scores = screening_scores,
+                features         = features,
+                fusion_mode      = combined.get("fusion_mode", "unknown"),
+                voice_dominant   = voice_dominant,
+            )
+            save_chat_message(session_id, "result", "assistant", cbt_text)
+            print(f"[chat/result] ✅ MongoDB saved prediction + CBT message", flush=True)
+        except Exception as db_exc:
+            print(f"[chat/result] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+        # ─────────────────────────────────────────────────────────────────
 
         return jsonify({
             "message":        cbt_text,
@@ -937,6 +1014,20 @@ def feedback_route():
     }
     _feedback_log.append(entry)
     print(f"[FEEDBACK] {entry}", flush=True)
+
+    # ── MongoDB: save feedback ────────────────────────────────────────────
+    try:
+        save_feedback(
+            session_id    = entry["session_id"],
+            msg_idx       = entry["msg_idx"],
+            feedback_type = entry["type"],
+            reward        = entry["reward"],
+        )
+        print(f"[feedback] ✅ MongoDB saved feedback", flush=True)
+    except Exception as db_exc:
+        print(f"[feedback] ⚠️  MongoDB save failed: {db_exc}", flush=True)
+    # ─────────────────────────────────────────────────────────────────────
+
     total      = len(_feedback_log)
     positives  = sum(1 for e in _feedback_log if e["type"] == "up")
     avg_reward = (positives * 1 + (total - positives) * -1) / total if total else 0
