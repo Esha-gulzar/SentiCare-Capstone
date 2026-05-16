@@ -1,4 +1,4 @@
-<!-- SentiCare README -->
+<!-- SentiCare README
 <div align="center">
 
 # 🧠 SentiCare  
@@ -180,4 +180,17 @@ This project is licensed under the **MIT License** – see the [LICENSE](LICENSE
 
 <div align="center">
 Made with ❤️ by the SentiCare Team – University of Sargodha, 2025–2026
-</div>
+</div> -->
+cat > README.md << 'EOF'
+---
+title: SentiCare
+emoji: 🧠
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
+# SentiCare
+AI-powered mental health assistant with voice input, emotion detection, and CBT therapy responses.
+EOF
