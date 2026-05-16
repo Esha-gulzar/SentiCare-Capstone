@@ -118,13 +118,6 @@ ANXIETY_FEATURE_QUESTIONS = [
         "min": 1, "max": 10,
     },
     {
-        "col":         "Heart Rate (bpm)",
-        "question_en": "What is your resting heart rate in beats per minute? (e.g. 75)",
-        "question_ur": "آپ کی دل کی دھڑکن فی منٹ کتنی ہے؟ (مثلاً 75)",
-        "input_type":  "number",
-        "min": 40, "max": 180,
-    },
-    {
         "col":         "Breathing Rate (breaths/min)",
         "question_en": "What is your breathing rate in breaths per minute? (e.g. 16)",
         "question_ur": "آپ کی سانس کی شرح فی منٹ کیا ہے؟ (مثلاً 16)",

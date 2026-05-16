@@ -1,130 +1,189 @@
-# conversation_engine_voice_fusion_patch.py
+# backend/chatbot/conversation_engine.py
 #
-# THIS IS A PATCH FILE — not a replacement for your full conversation_engine.py.
+# PIPELINE POSITION:
+#   Called by app.py for:
+#     • calculate_screening_scores()  — after screening Qs
+#     • determine_condition()         — routes to anxiety/stress/depression
+#     • run_prediction()              — wraps predictor.predict()
+#     • map_prediction_to_level()     — int 0/1/2 → "low"/"medium"/"high"
+#     • generate_cbt_response()       — wraps select_template()
 #
-# ADD these two methods to your existing ConversationEngine class.
-# They implement the "Fusion layer (new)" step in the required pipeline:
-#
-#   feature_answers + voice_fusion → combined ML feature vector → ML Prediction
-#
-# The class diagram shows:
-#   ConversationManager.EmotionData ← send data ← EmotionAnalyzer
-#   ConversationManager ← compare data → CBT-Template Manager
-#
-# In practice app.py already calls engine.run_prediction(condition, features).
-# The fusion layer adds voice_fusion scores AS EXTRA FEATURES to the feature
-# dict BEFORE it goes into the ML model.  This means the ML model sees both
-# the user's typed/clicked answers AND the acoustic emotion signal together.
-#
+# CHANGES vs previous version:
 # ─────────────────────────────────────────────────────────────────────────────
-# HOW TO USE:
+# NEW — generate_cbt_response() accepts voice_dominant parameter.
+#   This threads the FusionLayer output all the way to select_template()
+#   so the CBT-Template Manager receives the full signal:
+#       condition + level + voice_dominant + lang
 #
-#   In app.py (already done in app.py v3), replace:
-#       prediction = engine.run_prediction(condition, features)
-#   with:
-#       fused = engine.build_fused_feature_vector(condition, features, voice_fusion)
-#       prediction = engine.run_prediction(condition, fused)
-#
+# ALL OTHER LOGIC (FIX 1–3 from previous version) IS PRESERVED EXACTLY.
 # ─────────────────────────────────────────────────────────────────────────────
 
-class ConversationEngineFusionMixin:
-    """
-    Mixin that adds voice-fusion capability to ConversationEngine.
+from backend.chatbot.router            import route_condition
+from backend.chatbot.predictor         import predict
+from backend.chatbot.template_selector import select_template
 
-    Mix into ConversationEngine by adding it to the class bases:
-        class ConversationEngine(ConversationEngineFusionMixin, ...):
-            ...
+from backend.chatbot.questions.anxiety_questions    import ANXIETY_FEATURE_QUESTIONS
+from backend.chatbot.questions.stress_questions     import STRESS_FEATURE_QUESTIONS
+from backend.chatbot.questions.depression_questions import DEPRESSION_FEATURE_QUESTIONS
 
-    Or simply paste the two methods directly into ConversationEngine.
-    """
 
-    def build_fused_feature_vector(
-        self,
-        condition:    str,
-        features:     dict,
-        voice_fusion: dict,
-    ) -> dict:
+_SCREENING_DOMAIN_MAP: dict[str, str] = {
+    "feeling_nervous":      "anxiety",
+    "uncontrollable_worry": "anxiety",
+    "restlessness":         "anxiety",
+    "feeling_down":         "depression",
+    "loss_of_interest":     "depression",
+    "fatigue":              "depression",
+    "overwhelmed":          "stress",
+    "irritability":         "stress",
+}
+
+_INT_TO_LEVEL: dict[int, str] = {0: "low", 1: "medium", 2: "high"}
+_FALLBACK_LEVEL = "medium"
+
+
+class ConversationEngine:
+
+    def __init__(self):
+        pass
+
+    # ── Screening ────────────────────────────────────────────────────────────
+
+    def calculate_screening_scores(self, screening_answers: dict) -> dict:
+        scores = {"anxiety": 0, "depression": 0, "stress": 0}
+        for q_id, val in screening_answers.items():
+            domain = _SCREENING_DOMAIN_MAP.get(q_id)
+            if domain:
+                try:
+                    scores[domain] += int(val)
+                except (TypeError, ValueError):
+                    pass
+        print(f"[ConversationEngine] screening_scores={scores}", flush=True)
+        return scores
+
+    def determine_condition(self, scores: dict) -> str:
+        return route_condition(scores)
+
+    # ── Feature questions ────────────────────────────────────────────────────
+
+    def get_feature_questions(self, condition: str) -> list:
+        if condition == "anxiety":    return ANXIETY_FEATURE_QUESTIONS
+        if condition == "stress":     return STRESS_FEATURE_QUESTIONS
+        if condition == "depression": return DEPRESSION_FEATURE_QUESTIONS
+        return []
+
+    # ── Prediction ───────────────────────────────────────────────────────────
+
+    def run_prediction(self, condition: str, feature_answers: dict):
         """
-        Combine feature-question answers with voice biomarker scores
-        to create a fused feature vector for ML prediction.
-
-        This is the "Fusion layer (new)" in the required pipeline diagram:
-            feature_answers + voice_fusion → combined into ML feature vector
-
-        Parameters
-        ----------
-        condition    : "anxiety" or "stress"
-        features     : dict of feature answers (keys = column names used by ML model)
-        voice_fusion : dict with keys: anxiety, stress, sadness, joy (0.0–1.0 floats)
-                       from VoiceInputHandler.run_pipeline()["voice_fusion_for_ml"]
-
-        Returns
-        -------
-        dict — features dict with voice scores appended as extra columns.
-               If voice_fusion is empty/None, returns features unchanged.
-
-        Voice columns appended
-        ----------------------
-        Anxiety model:
-            "voice_anxiety_score"  ← voice_fusion["anxiety"]  (0–1)
-            "voice_sadness_score"  ← voice_fusion["sadness"]  (0–1)
-        Stress model:
-            "voice_stress_score"   ← voice_fusion["stress"]   (0–1)
-            "voice_sadness_score"  ← voice_fusion["sadness"]  (0–1)
-
-        NOTE: If your scikit-learn model was NOT trained with these extra
-        columns, run_prediction() will raise a ValueError about unexpected
-        feature names.  In that case use app.py's _adjust_level_with_voice()
-        fallback instead (which adjusts the level AFTER prediction, without
-        touching the feature vector).  The fallback is already in app.py v3.
+        Returns int 0/1/2 (or None for unknown condition).
+        feature_answers here is already the FUSED vector from FusionLayer.
         """
-        if not voice_fusion:
-            return features
-
-        fused = dict(features)   # shallow copy — do not mutate caller's dict
-
-        if condition == "anxiety":
-            fused["voice_anxiety_score"] = float(voice_fusion.get("anxiety", 0.0))
-            fused["voice_sadness_score"] = float(voice_fusion.get("sadness", 0.0))
-        else:
-            fused["voice_stress_score"]  = float(voice_fusion.get("stress",  0.0))
-            fused["voice_sadness_score"] = float(voice_fusion.get("sadness", 0.0))
-
-        print(
-            f"[ConversationEngine] Fused feature vector built for condition={condition}. "
-            f"Voice columns added: { {k: v for k, v in fused.items() if 'voice_' in k} }",
-            flush=True,
-        )
-        return fused
+        return predict(condition, feature_answers)
 
     def map_prediction_to_level(self, prediction) -> str:
         """
-        Map a raw ML model output (class label or numeric) to
-        "low" | "medium" | "high".
-
-        Override this method if your model returns different class labels.
-
-        Returns empty string if prediction cannot be mapped (caller should
-        then use _map_level() fallback in app.py).
+        Always returns "low" | "medium" | "high".
+        Never returns None.
         """
         if prediction is None:
-            return ""
+            print(
+                f"[ConversationEngine] ⚠️  map_prediction_to_level received None "
+                f"— defaulting to '{_FALLBACK_LEVEL}'.",
+                flush=True,
+            )
+            return _FALLBACK_LEVEL
 
-        # String class labels (most scikit-learn classifiers)
-        if isinstance(prediction, str):
-            pred_lower = prediction.strip().lower()
-            if pred_lower in ("low",    "0", "mild"):      return "low"
-            if pred_lower in ("medium", "1", "moderate"):  return "medium"
-            if pred_lower in ("high",   "2", "severe"):    return "high"
-            return ""
-
-        # Numeric labels
         try:
-            val = float(prediction)
-            if val <= 0:    return "low"
-            elif val <= 1:  return "medium"
-            else:           return "high"
+            val = int(float(str(prediction)))
+            result = _INT_TO_LEVEL.get(val)
+            if result:
+                print(
+                    f"[ConversationEngine] map_prediction_to_level: "
+                    f"{prediction!r} → '{result}'",
+                    flush=True,
+                )
+                return result
         except (TypeError, ValueError):
-            return ""
+            pass
 
+        print(
+            f"[ConversationEngine] ⚠️  Unrecognised prediction={prediction!r}. "
+            f"Defaulting to '{_FALLBACK_LEVEL}'.",
+            flush=True,
+        )
+        return _FALLBACK_LEVEL
 
+    # ── CBT response ─────────────────────────────────────────────────────────
+
+    def generate_cbt_response(
+        self,
+        condition:      str,
+        level:          str,
+        lang:           str = "en",
+        voice_dominant: str = "neutral",      # ← NEW: from FusionLayer
+    ) -> dict | None:
+        """
+        Returns dict:
+            validation      str
+            steps           list[str]
+            steps_alt       list[str] | None
+            grounding       str
+            questions       list[str]
+            voice_dominant  str          ← echoed from template_selector
+            prefer_alt_steps bool        ← True when voice suggests alt steps
+        or None if no template found.
+
+        voice_dominant threads the FusionLayer output into the
+        CBT-Template Manager (select_template) so the full pipeline
+        signal is:  condition + level + voice_dominant + lang.
+        """
+        if not level:
+            print(
+                f"[ConversationEngine] ⚠️  generate_cbt_response called with "
+                f"level={level!r}. Substituting '{_FALLBACK_LEVEL}'.",
+                flush=True,
+            )
+            level = _FALLBACK_LEVEL
+
+        print(
+            f"[ConversationEngine] generate_cbt_response: "
+            f"condition='{condition}'  level='{level}'  "
+            f"lang='{lang}'  voice_dominant='{voice_dominant}'",
+            flush=True,
+        )
+
+        template = select_template(
+            condition,
+            level,
+            lang=lang,
+            voice_dominant=voice_dominant,     # ← forwarded
+        )
+
+        if template is None:
+            print(
+                f"[ConversationEngine] ⚠️  No template matched for "
+                f"condition='{condition}' level='{level}' lang='{lang}'. "
+                f"Check cbt_templates.json.",
+                flush=True,
+            )
+            return None
+
+        therapy = template["therapy"]
+        print(
+            f"[ConversationEngine] ✓ Template found. "
+            f"steps={len(therapy.get('intervention_steps', []))}  "
+            f"steps_alt={'yes' if therapy.get('steps_alt') else 'no'}  "
+            f"prefer_alt={template.get('prefer_alt_steps', False)}",
+            flush=True,
+        )
+        return {
+            "validation":      therapy["validation"],
+            "steps":           therapy["intervention_steps"],
+            "steps_alt":       therapy.get("steps_alt"),
+            "grounding":       therapy["grounding_statement"],
+            "questions":       template["guided_questions"],
+            # ── new ──────────────────────────────────────────────────────
+            "voice_dominant":  template.get("voice_dominant", voice_dominant),
+            "prefer_alt_steps":template.get("prefer_alt_steps", False),
+        }

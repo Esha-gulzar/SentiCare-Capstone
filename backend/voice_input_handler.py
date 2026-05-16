@@ -1,26 +1,16 @@
-# voice_input_handler.py — FIXED v7
+# voice_input_handler.py — FIXED v8
 #
-# CHANGES vs v6:
+# CHANGES vs v7:
 # ─────────────────────────────────────────────────────────────────────────────
-# NLU INTEGRATION:
-#   run_pipeline() now runs NLU between STT and EmotionAnalyzer, matching
-#   the class diagram exactly:
+# DEPRESSION KEY IN voice_fusion_for_ml (fix):
+#   v7 only included anxiety/stress/sadness in voice_fusion_for_ml.
+#   emotion_analyzer v7 now returns a "depression" key in fusion, but
+#   voice_input_handler was not forwarding it.
 #
-#     VoiceInputHandler → STT → NLU → EmotionAnalyzer
-#                                ↑
-#                          (new step added here)
+#   Fix: voice_fusion_for_ml now includes fusion.get("depression", 0.0)
+#   so app.py receives the depression signal alongside the others.
 #
-#   The NLU result is:
-#     1. Passed into EmotionAnalyzer.classify_emotion() as nlu_result
-#     2. Included in the returned dict so the frontend can display keywords
-#        and intent if needed
-#
-# VOICE + QUESTIONS ML FUSION (Option A):
-#   run_pipeline() now stores the voice fusion scores in the returned dict
-#   under the key "voice_fusion_for_ml". These are read by app.py at the
-#   end of the features stage to adjust the ML prediction level.
-#
-# ALL OTHER CODE IDENTICAL TO v6.
+# ALL OTHER CODE IDENTICAL TO v7.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os
@@ -34,7 +24,7 @@ import numpy as np
 from backend.stt              import STT
 from backend.voice_biomarker  import VoiceBiomarker
 from backend.emotion_analyzer import EmotionAnalyzer
-from backend.nlu              import NLU          # ← NEW
+from backend.nlu              import NLU
 
 
 class VoiceInputHandler:
@@ -379,8 +369,7 @@ class VoiceInputHandler:
                 flush=True,
             )
 
-            # ── 3. NLU (NEW STEP — sits between STT and EmotionAnalyzer) ──
-            # This matches the class diagram: STT → NLU → EmotionAnalyzer
+            # ── 3. NLU ────────────────────────────────────────────────────
             nlu        = NLU()
             nlu_result = nlu.analyze(transcript, language=lang)
 
@@ -403,7 +392,7 @@ class VoiceInputHandler:
                 flush=True,
             )
 
-            # ── 5. Silence check (requires BOTH silent acoustics AND empty transcript) ─
+            # ── 5. Silence check ──────────────────────────────────────────
             is_truly_silent = (
                 bio_result["pitch"] == 0.0
                 and bio_result["tone"] < VoiceBiomarker.SILENCE_TONE_THRESHOLD
@@ -415,33 +404,44 @@ class VoiceInputHandler:
                 return {
                     "transcript":           "",
                     "dominant_emotion":     "neutral",
-                    "fusion":               {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                    "fusion":               {
+                        "anxiety":    0.0,
+                        "stress":     0.0,
+                        "sadness":    0.0,
+                        "depression": 0.0,
+                        "joy":        0.0,
+                    },
                     "biomarkers":           {
                         "pitch":     0.0,
                         "tone":      0.0,
                         "mfcc_mean": bio_result.get("mfcc_mean", 0.0),
                     },
                     "nlu":                  nlu_result,
-                    "voice_fusion_for_ml":  {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                    "voice_fusion_for_ml":  {
+                        "anxiety":    0.0,
+                        "stress":     0.0,
+                        "sadness":    0.0,
+                        "depression": 0.0,
+                    },
                 }
 
-            # ── 6. Emotion classification (with NLU boost) ────────────────
+            # ── 6. Emotion classification ─────────────────────────────────
             analyzer   = EmotionAnalyzer()
             emo_result = analyzer.classify_emotion(
                 transcript,
                 bio_result,
                 language=lang,
-                nlu_result=nlu_result,   # ← pass NLU output into EmotionAnalyzer
+                nlu_result=nlu_result,
             )
 
             fusion = emo_result["fusion"]
 
-            # voice_fusion_for_ml is what app.py reads to adjust ML prediction.
-            # It is the final emotion fusion scores AFTER all processing.
+            # ── FIXED: include depression in voice_fusion_for_ml ──────────
             voice_fusion_for_ml = {
-                "anxiety": fusion.get("anxiety", 0.0),
-                "stress":  fusion.get("stress",  0.0),
-                "sadness": fusion.get("sadness", 0.0),
+                "anxiety":    fusion.get("anxiety",    0.0),
+                "stress":     fusion.get("stress",     0.0),
+                "sadness":    fusion.get("sadness",    0.0),
+                "depression": fusion.get("depression", 0.0),   # ← NEW
             }
 
             return {
@@ -453,13 +453,11 @@ class VoiceInputHandler:
                     "tone":      bio_result["tone"],
                     "mfcc_mean": bio_result.get("mfcc_mean", 0.0),
                 },
-                # NLU result exposed for frontend display (intent, sentiment, keywords)
-                "nlu":                 {
+                "nlu": {
                     "intent":    nlu_result["intent"],
                     "sentiment": nlu_result["sentiment"],
                     "keywords":  nlu_result["keywords"],
                 },
-                # Used by app.py /chat features stage to adjust ML level
                 "voice_fusion_for_ml": voice_fusion_for_ml,
             }
 
@@ -471,10 +469,21 @@ class VoiceInputHandler:
                 "error":               str(exc),
                 "transcript":          "",
                 "dominant_emotion":    "unknown",
-                "fusion":              {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                "fusion":              {
+                    "anxiety":    0.0,
+                    "stress":     0.0,
+                    "sadness":    0.0,
+                    "depression": 0.0,
+                    "joy":        0.0,
+                },
                 "biomarkers":          {"pitch": 0.0, "tone": 0.0, "mfcc_mean": 0.0},
                 "nlu":                 {"intent": "neutral", "sentiment": "neutral", "keywords": {}},
-                "voice_fusion_for_ml": {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                "voice_fusion_for_ml": {
+                    "anxiety":    0.0,
+                    "stress":     0.0,
+                    "sadness":    0.0,
+                    "depression": 0.0,
+                },
             }
 
         finally:

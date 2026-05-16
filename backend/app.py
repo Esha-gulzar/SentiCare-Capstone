@@ -1,47 +1,44 @@
-# app.py — FIXED v2
+# app.py — v12
 #
-# FIX vs previous version:
+# CHANGES vs v11:
 # ─────────────────────────────────────────────────────────────────────────────
-# VOICE-INTRO + DEBUG-VOICE SUFFIX FIX:
+# FIX: Questions being skipped silently.
 #
-#   Previous code:
-#     suffix = os.path.splitext(audio_file.filename or "")[-1] or ".webm"
+# ROOT CAUSE:
+#   validate_feature_input() was returning True for blank ("") input on
+#   radio/select/slider types — so questions got "answered" with "" and
+#   the feature_index advanced without the user actually answering.
 #
-#   Bug: os.path.splitext("recording.webm") returns ("recording", ".webm")
-#        so [-1] gives ".webm". That's correct when filename is set.
-#        But os.path.splitext("") returns ("", "") so [-1] gives "" and the
-#        fallback ".webm" fires. HOWEVER — the real failure was different:
+# FIXES APPLIED:
+#   1. validate_feature_input() — added blank input guard at the top.
+#      Any empty/whitespace-only input is immediately rejected and the
+#      question is re-sent, for ALL input types.
 #
-#        When Chrome sends the blob as "recording.webm", filename IS set and
-#        suffix IS ".webm". The input file is saved with the correct extension.
-#        Strategy 1 (_decode_ffmpeg_pipe) then writes the output WAV via
-#        Python's wave module with raw s16le bytes — and Whisper's internal
-#        ffmpeg rejects that WAV as "Invalid data found".
+#   2. features stage in chat() — added early-return guard: if user_input
+#      is blank when we enter the features stage, re-send the current
+#      question without advancing the index.
 #
-#   That bug is fixed in voice_input_handler.py (Strategy 1 now tells ffmpeg
-#   to write the WAV directly instead of piping raw PCM through wave module).
-#
-#   This file: suffix extraction is made more explicit and defensive.
-#   Both /voice-intro and /debug-voice now use the same helper.
-#
-# NO OTHER CHANGES to chat, TTS, feedback, or screening endpoints.
+# ALL OTHER LOGIC IDENTICAL TO v11.
 # ─────────────────────────────────────────────────────────────────────────────
 
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 
-from backend.chatbot.conversation_engine  import ConversationEngine
-from backend.chatbot.questions.anxiety_questions import ANXIETY_FEATURE_QUESTIONS
-from backend.chatbot.questions.stress_questions  import STRESS_FEATURE_QUESTIONS, STRESS_DEFAULTS
+from backend.conversation_engine import ConversationEngine
+from backend.chatbot.emotion_fusion_combiner import EmotionFusionCombiner
+from backend.chatbot.questions.anxiety_questions    import ANXIETY_FEATURE_QUESTIONS
+from backend.chatbot.questions.stress_questions     import STRESS_FEATURE_QUESTIONS
+from backend.chatbot.questions.depression_questions import DEPRESSION_FEATURE_QUESTIONS
 
 import edge_tts
 import asyncio
 import io
 import re
 import hashlib
-
 import os
 import tempfile
+import traceback as _tb
+
 from backend.voice_input_handler import VoiceInputHandler
 from backend.stt import STT
 
@@ -49,7 +46,7 @@ from backend.stt import STT
 app = Flask(__name__)
 CORS(app)
 
-engine = ConversationEngine()
+engine    = ConversationEngine()
 sessions: dict = {}
 
 VOICE_EN = "en-US-AriaNeural"
@@ -58,40 +55,24 @@ _tts_cache: dict = {}
 
 SUPPORTED_LANGUAGES = {"en", "ur"}
 
-# Maps mime type fragments to file extensions.
-# Used as a fallback when the uploaded filename has no extension.
 _MIME_TO_EXT = {
     "ogg":  ".ogg",
     "mp4":  ".mp4",
     "mpeg": ".mp3",
     "wav":  ".wav",
-    "webm": ".webm",   # default / most common from Chrome + Firefox
+    "webm": ".webm",
 }
 
 
 def _audio_suffix(audio_file) -> str:
-    """
-    Derive the correct file extension for the uploaded audio blob.
-
-    Priority:
-      1. Extension from audio_file.filename  (set by voiceApi.js)
-      2. Extension inferred from content_type
-      3. Hard fallback: ".webm"
-
-    voiceApi.js always sends filename="recording.{ext}" where ext is derived
-    from the blob's mimeType, so priority 1 almost always wins.
-    """
     filename = audio_file.filename or ""
-    ext = os.path.splitext(filename)[1]   # e.g. ".webm", ".ogg", ""
+    ext = os.path.splitext(filename)[1]
     if ext:
         return ext
-
-    # Fallback: infer from Content-Type header
     ct = (audio_file.content_type or "").lower()
     for fragment, suffix in _MIME_TO_EXT.items():
         if fragment in ct:
             return suffix
-
     return ".webm"
 
 
@@ -101,32 +82,22 @@ def _audio_suffix(audio_file) -> str:
 
 @app.route("/voice-intro", methods=["POST"])
 def voice_intro():
-    """
-    Receives audio from VoiceCheckIn.jsx.
-    Runs the full pipeline: preprocess → STT → VoiceBiomarker → EmotionAnalyzer.
-    Returns JSON with transcript, dominant_emotion, fusion scores, and biomarkers.
-    """
     if "audio" not in request.files:
         return jsonify({"error": "No audio file received"}), 400
 
     audio_file = request.files["audio"]
     session_id = request.form.get("session_id", "anonymous")
-
-    raw_lang = request.form.get("lang", "en").strip().lower()
-    lang     = raw_lang if raw_lang in SUPPORTED_LANGUAGES else "en"
-
-    if raw_lang not in SUPPORTED_LANGUAGES:
-        print(f"[voice-intro] Unsupported lang='{raw_lang}' — defaulting to 'en'.", flush=True)
-
+    raw_lang   = request.form.get("lang", "en").strip().lower()
+    lang       = raw_lang if raw_lang in SUPPORTED_LANGUAGES else "en"
     suffix     = _audio_suffix(audio_file)
+
     tmp        = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     audio_path = tmp.name
     tmp.close()
 
     print(
         f"[voice-intro] session={session_id}  lang={lang}  "
-        f"filename={audio_file.filename}  content_type={audio_file.content_type}  "
-        f"suffix={suffix}",
+        f"filename={audio_file.filename}  suffix={suffix}",
         flush=True,
     )
 
@@ -136,25 +107,45 @@ def voice_intro():
         print(f"[voice-intro] Saved: {audio_path}  ({file_size} bytes)", flush=True)
 
         if file_size < 100:
-            print("[voice-intro] Upload too small — likely empty recording.", flush=True)
             return jsonify({
                 "transcript":       "",
                 "dominant_emotion": "neutral",
-                "fusion":           {"anxiety": 0.0, "stress": 0.0, "sadness": 0.0},
+                "fusion":           {"anxiety": 0.0, "stress": 0.0,
+                                     "sadness": 0.0, "depression": 0.0, "joy": 0.0},
                 "biomarkers":       {"pitch": 0.0, "tone": 0.0, "mfcc_mean": 0.0},
                 "warning":          "Audio upload was too small.",
             }), 200
 
         handler = VoiceInputHandler()
         result  = handler.run_pipeline(audio_path, lang=lang)
-
         print(f"[voice-intro] Pipeline result: {result}", flush=True)
+
+        sess = sessions.setdefault(session_id, {
+            "stage":             "greeting",
+            "lang":              lang,
+            "screening_answers": {},
+            "screening_index":   0,
+            "feature_answers":   {},
+            "feature_index":     0,
+            "condition":         None,
+            "voice_fusion":      {},
+            "voice_dominant":    "neutral",
+        })
+        sess["voice_fusion"]   = result.get("voice_fusion_for_ml", {})
+        sess["voice_dominant"] = result.get("dominant_emotion", "neutral")
+
+        print(
+            f"[voice-intro] Stored → "
+            f"voice_fusion={sess['voice_fusion']}  "
+            f"voice_dominant='{sess['voice_dominant']}'",
+            flush=True,
+        )
+
         return jsonify(result), 200
 
     except Exception as exc:
-        import traceback
-        app.logger.error(f"[voice-intro] ERROR session={session_id}: {exc}")
-        traceback.print_exc()
+        app.logger.error(f"[voice-intro] ERROR: {exc}")
+        _tb.print_exc()
         return jsonify({"error": str(exc)}), 500
 
     finally:
@@ -202,40 +193,44 @@ def get_voice(lang: str) -> str:
 
 _UI = {
     "en": {
-        "greeting":          "Hello! I am SentiCare, your mental health support assistant. Let me ask you a few questions to understand how you are feeling.",
-        "thank_you":         "Thank you. Based on your responses, it looks like you may be experiencing some {condition}-related symptoms. I have a few more specific questions.",
-        "result":            "Result: {condition} — {level} level",
-        "condition_anxiety": "Anxiety",
-        "condition_stress":  "Stress",
-        "level_low":         "LOW",
-        "level_medium":      "MEDIUM",
-        "level_high":        "HIGH",
-        "fallback":          "Thank you for sharing. Based on what you told me, I recommend focusing on self-care, rest, and speaking to a professional if needed. You are not alone.",
-        "session_done":      "Thank you for using SentiCare. Please start a new chat to continue.",
-        "err_0_3":           "Please enter a number between 0 and 3.",
-        "err_number":        "Please enter a valid number.",
-        "err_range":         "Please enter a number between {lo} and {hi}.",
-        "err_scale5":        "Please enter a number between 1 and 5.",
-        "err_gender":        "Please select Male or Female.",
-        "steps_label":       "Steps",
+        "greeting":             "Hello! I am SentiCare, your mental health support assistant. Let me ask you a few questions to understand how you are feeling.",
+        "thank_you":            "Thank you. Based on your responses, it looks like you may be experiencing some {condition}-related symptoms. I have a few more specific questions for you.",
+        "result":               "Result: {condition} — {level} level",
+        "condition_anxiety":    "Anxiety",
+        "condition_stress":     "Stress",
+        "condition_depression": "Depression",
+        "level_low":            "LOW",
+        "level_medium":         "MEDIUM",
+        "level_high":           "HIGH",
+        "fallback":             "Thank you for sharing. Based on what you told me, I recommend focusing on self-care, rest, and speaking to a professional if needed. You are not alone.",
+        "session_done":         "Thank you for using SentiCare. Please start a new chat to continue.",
+        "err_0_3":              "Please enter a number between 0 and 3.",
+        "err_number":           "Please enter a valid number.",
+        "err_range":            "Please enter a number between {lo} and {hi}.",
+        "err_scale5":           "Please enter a number between 1 and 5.",
+        "err_gender":           "Please select an option.",
+        "err_required":         "Please answer this question before continuing.",
+        "steps_label":          "Steps",
     },
     "ur": {
-        "greeting":          "السلام علیکم! میں سینٹی کیئر ہوں، آپ کا ذہنی صحت کا معاون۔ آپ کی کیفیت سمجھنے کے لیے چند سوالات پوچھنا چاہتا ہوں۔",
-        "thank_you":         "شکریہ۔ آپ کے جوابات کی بنیاد پر لگتا ہے آپ {condition} سے متعلق علامات محسوس کر رہے ہیں۔ چند اور مخصوص سوالات ہیں۔",
-        "result":            "نتیجہ: {condition} — {level} سطح",
-        "condition_anxiety": "گھبراہٹ",
-        "condition_stress":  "ذہنی دباؤ",
-        "level_low":         "کم",
-        "level_medium":      "درمیانہ",
-        "level_high":        "زیادہ",
-        "fallback":          "آپ کی بات سن کر اچھا لگا۔ خود کی دیکھ بھال کریں، آرام کریں، اور ضرورت ہو تو کسی ماہر سے رابطہ کریں۔ آپ اکیلے نہیں ہیں۔",
-        "session_done":      "سینٹی کیئر استعمال کرنے کا شکریہ۔ نیا چیٹ شروع کریں۔",
-        "err_0_3":           "براہ کرم 0 سے 3 کے درمیان نمبر درج کریں۔",
-        "err_number":        "براہ کرم درست نمبر درج کریں۔",
-        "err_range":         "براہ کرم {lo} سے {hi} کے درمیان نمبر درج کریں۔",
-        "err_scale5":        "براہ کرم 1 سے 5 کے درمیان نمبر درج کریں۔",
-        "err_gender":        "براہ کرم مرد یا عورت منتخب کریں۔",
-        "steps_label":       "اقدامات",
+        "greeting":             "السلام علیکم! میں سینٹی کیئر ہوں، آپ کا ذہنی صحت کا معاون۔ آپ کی کیفیت سمجھنے کے لیے چند سوالات پوچھنا چاہتا ہوں۔",
+        "thank_you":            "شکریہ۔ آپ کے جوابات کی بنیاد پر لگتا ہے آپ {condition} سے متعلق علامات محسوس کر رہے ہیں۔ چند اور مخصوص سوالات ہیں۔",
+        "result":               "نتیجہ: {condition} — {level} سطح",
+        "condition_anxiety":    "گھبراہٹ",
+        "condition_stress":     "ذہنی دباؤ",
+        "condition_depression": "ڈپریشن",
+        "level_low":            "کم",
+        "level_medium":         "درمیانہ",
+        "level_high":           "زیادہ",
+        "fallback":             "آپ کی بات سن کر اچھا لگا۔ خود کی دیکھ بھال کریں، آرام کریں، اور ضرورت ہو تو کسی ماہر سے رابطہ کریں۔ آپ اکیلے نہیں ہیں۔",
+        "session_done":         "سینٹی کیئر استعمال کرنے کا شکریہ۔ نیا چیٹ شروع کریں۔",
+        "err_0_3":              "براہ کرم 0 سے 3 کے درمیان نمبر درج کریں۔",
+        "err_number":           "براہ کرم درست نمبر درج کریں۔",
+        "err_range":            "براہ کرم {lo} سے {hi} کے درمیان نمبر درج کریں۔",
+        "err_scale5":           "براہ کرم 1 سے 5 کے درمیان نمبر درج کریں۔",
+        "err_gender":           "براہ کرم ایک آپشن منتخب کریں۔",
+        "err_required":         "براہ کرم جاری رکھنے سے پہلے اس سوال کا جواب دیں۔",
+        "steps_label":          "اقدامات",
     },
 }
 
@@ -304,6 +299,19 @@ _SCALE5_UR = [
     {"label": "5 — ہمیشہ",      "value": "5"},
 ]
 
+_PHQ_OPTS_EN = [
+    {"label": "0 — Not at all",             "value": "0"},
+    {"label": "1 — Several days",            "value": "1"},
+    {"label": "2 — More than half the days", "value": "2"},
+    {"label": "3 — Nearly every day",        "value": "3"},
+]
+_PHQ_OPTS_UR = [
+    {"label": "0 — بالکل نہیں",       "value": "0"},
+    {"label": "1 — کچھ دن",            "value": "1"},
+    {"label": "2 — آدھے سے زیادہ دن", "value": "2"},
+    {"label": "3 — تقریباً ہر روز",    "value": "3"},
+]
+
 
 def _screening_q(idx: int, lang: str) -> dict:
     q = _SCREENING_QS[idx]
@@ -315,18 +323,33 @@ def _screening_q(idx: int, lang: str) -> dict:
 
 
 def _feature_qs(condition: str) -> list:
-    return ANXIETY_FEATURE_QUESTIONS if condition == "anxiety" else STRESS_FEATURE_QUESTIONS
+    if condition == "anxiety":    return ANXIETY_FEATURE_QUESTIONS
+    if condition == "stress":     return STRESS_FEATURE_QUESTIONS
+    if condition == "depression": return DEPRESSION_FEATURE_QUESTIONS
+    return []
 
 
 def _resolve_feature(q: dict, lang: str) -> dict:
     text  = q["question_ur"] if lang == "ur" else q["question_en"]
     itype = q["input_type"]
-    opts  = None
+
+    if itype == "number":
+        return {"question": text, "options": None}
     if itype == "scale_5":
-        opts = _SCALE5_UR if lang == "ur" else _SCALE5_EN
-    elif itype in ("radio", "select", "stress_gender"):
+        return {"question": text, "options": _SCALE5_UR if lang == "ur" else _SCALE5_EN}
+    if itype in ("radio", "select", "stress_gender"):
         opts = q.get("options_ur" if lang == "ur" else "options_en")
-    return {"question": text, "options": opts}
+        return {"question": text, "options": opts}
+    if itype == "slider":
+        raw_opts = q.get("options_ur" if lang == "ur" else "options_en")
+        if raw_opts:
+            return {"question": text, "options": raw_opts}
+        lo = q.get("min", 0)
+        hi = q.get("max", 3)
+        if lo == 0 and hi == 3:
+            return {"question": text, "options": _PHQ_OPTS_UR if lang == "ur" else _PHQ_OPTS_EN}
+        return {"question": text, "options": None}
+    return {"question": text, "options": None}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -338,6 +361,12 @@ _UR_MAP = {
     "مرد": "Male", "عورت": "Female", "دیگر": "Other",
     "طالب علم": "Student", "ملازم": "Employed",
     "خود کاروبار": "Self-employed", "بے روزگار": "Unemployed",
+    "پہلا سال یا مساوی":  "First Year or Equivalent",
+    "دوسرا سال یا مساوی": "Second Year or Equivalent",
+    "تیسرا سال یا مساوی": "Third Year or Equivalent",
+    "چوتھا سال یا مساوی": "Fourth Year or Equivalent",
+    "2.50 سے کم":  "Below 2.50",
+    "بتانا نہیں چاہتے": "Prefer not to say",
 }
 
 
@@ -345,6 +374,11 @@ def validate_feature_input(raw: str, q: dict, lang: str):
     val   = raw.strip()
     itype = q["input_type"]
     q_txt = q["question_ur"] if lang == "ur" else q["question_en"]
+
+    # ── FIX 1: reject completely blank input for ALL types ────────────────
+    if not val:
+        return False, None, f"⚠️ {ui('err_required', lang)}\n👉 {q_txt}"
+    # ─────────────────────────────────────────────────────────────────────
 
     if itype in ("number", "slider"):
         try:
@@ -357,13 +391,21 @@ def validate_feature_input(raw: str, q: dict, lang: str):
         return True, int(num) if num == int(num) else num, None
 
     if itype in ("radio", "select"):
-        return True, _UR_MAP.get(val, val), None
+        opts_key = "options_ur" if lang == "ur" else "options_en"
+        options  = q.get(opts_key) or []
+        for opt in options:
+            if isinstance(opt, dict) and opt.get("value") == val:
+                return True, val, None
+            if isinstance(opt, dict) and opt.get("label") == val:
+                return True, opt.get("value", val), None
+        mapped = _UR_MAP.get(val, val)
+        return True, mapped, None
 
     if itype == "stress_gender":
         if val in ("0", "1"):
             return True, int(val), None
-        if val.lower() in ("male", "مرد"):     return True, 0, None
-        if val.lower() in ("female", "عورت"):  return True, 1, None
+        if val.lower() in ("male", "مرد"):    return True, 0, None
+        if val.lower() in ("female", "عورت"): return True, 1, None
         return False, None, f"⚠️ {ui('err_gender', lang)}\n👉 {q_txt}"
 
     if itype == "scale_5":
@@ -379,46 +421,108 @@ def validate_feature_input(raw: str, q: dict, lang: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  LEVEL FALLBACK MAPPING
+#  LEVEL MAPPING
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _map_level(prediction, condition: str) -> str:
     try:
-        val = float(prediction)
+        val = int(float(str(prediction)))
+        if condition == "stress":
+            # Stress model: 0=high, 1=medium, 2=low (inverted)
+            return {0: "high", 1: "medium", 2: "low"}.get(val, "medium")
+        return {0: "low", 1: "medium", 2: "high"}.get(val, "medium")
     except (TypeError, ValueError):
+        pass
+    s = str(prediction).strip().lower()
+    if any(k in s for k in ("minimal", "none", "low", "no depression", "normal", "healthy")):
+        return "low"
+    if any(k in s for k in ("moderate", "medium", "mild")):
         return "medium"
-    if condition == "anxiety":
-        if val <= 0:   return "low"
-        elif val <= 1: return "medium"
-        else:          return "high"
-    else:
-        if val == 0:   return "high"
-        elif val == 1: return "medium"
-        else:          return "low"
+    if any(k in s for k in ("severe", "high", "major")):
+        return "high"
+    print(
+        f"[_map_level] ⚠️  Unrecognised prediction={prediction!r} for "
+        f"condition='{condition}' — defaulting to medium.",
+        flush=True,
+    )
+    return "medium"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LEVEL LOOKUP DICTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+_LEVEL_ORDER  = {"low": 0, "medium": 1, "high": 2}
+_LEVEL_NAME   = {0: "low", 1: "medium", 2: "high"}
+_LEVEL_TO_INT = {"low": 0, "medium": 1, "high": 2}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONDITION LABEL HELPER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _condition_label(condition: str, lang: str) -> str:
+    key_map = {
+        "anxiety":    "condition_anxiety",
+        "stress":     "condition_stress",
+        "depression": "condition_depression",
+    }
+    return ui(key_map.get(condition, "condition_anxiety"), lang)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CBT RESPONSE BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_cbt_message(condition: str, level: str, lang: str,
-                      policy_mode: str = "default") -> str:
-    cond_label  = ui("condition_anxiety" if condition == "anxiety"
-                     else "condition_stress", lang)
+def build_cbt_message(
+    condition:      str,
+    level:          str,
+    lang:           str,
+    policy_mode:    str = "default",
+    voice_dominant: str = "neutral",
+) -> str:
+    cond_label  = _condition_label(condition, lang)
     level_label = ui(f"level_{level}", lang)
     result_line = ui("result", lang, condition=cond_label, level=level_label)
     steps_label = ui("steps_label", lang)
 
-    r = engine.generate_cbt_response(condition, level, lang=lang)
+    print(
+        f"[build_cbt] condition='{condition}'  level='{level}'  "
+        f"lang='{lang}'  policy='{policy_mode}'  "
+        f"voice_dominant='{voice_dominant}'",
+        flush=True,
+    )
+
+    r = engine.generate_cbt_response(
+        condition,
+        level,
+        lang=lang,
+        voice_dominant=voice_dominant,
+    )
+
     if not r:
+        print(
+            f"[build_cbt] ⚠️  No CBT response for condition='{condition}' "
+            f"level='{level}'. Returning fallback.",
+            flush=True,
+        )
         return ui("fallback", lang)
 
-    if policy_mode == "alternate" and r.get("steps_alt"):
-        steps_list = r["steps_alt"]
-    else:
-        steps_list = r["steps"]
+    use_alt = (
+        (policy_mode == "alternate" or r.get("prefer_alt_steps", False))
+        and r.get("steps_alt")
+    )
 
-    steps = " | ".join(steps_list)
+    steps_list = r["steps_alt"] if use_alt else r["steps"]
+    steps      = " | ".join(steps_list)
+
+    print(
+        f"[build_cbt] steps_variant={'alt' if use_alt else 'default'}  "
+        f"prefer_alt={r.get('prefer_alt_steps', False)}  "
+        f"policy_mode={policy_mode}",
+        flush=True,
+    )
+
     return (
         f"🔍 {result_line}\n\n"
         f"{r['validation']}\n\n"
@@ -471,15 +575,16 @@ def tts():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    body        = request.json or {}
-    session_id  = body.get("session_id")
-    user_input  = body.get("input", "").strip()
-    lang        = body.get("lang", "en").strip()
-    policy_mode = body.get("policy_mode", "default")
+    body         = request.json or {}
+    session_id   = body.get("session_id")
+    user_input   = body.get("input", "").strip()
+    lang         = body.get("lang", "en").strip()
+    policy_mode  = body.get("policy_mode", "default")
+
+    body_voice_fusion = body.get("voice_fusion") or {}
 
     if lang not in SUPPORTED_LANGUAGES:
         lang = "en"
-
     if policy_mode not in ("default", "alternate"):
         policy_mode = "default"
 
@@ -492,12 +597,23 @@ def chat():
             "feature_answers":   {},
             "feature_index":     0,
             "condition":         None,
+            "voice_fusion":      {},
+            "voice_dominant":    "neutral",
         }
 
     sess = sessions[session_id]
     sess["lang"] = lang
 
-    # ── GREETING ─────────────────────────────────────────────────────────────
+    voice_fusion   = sess.get("voice_fusion") or body_voice_fusion or {}
+    voice_dominant = sess.get("voice_dominant", "neutral")
+
+    print(
+        f"[chat] session={session_id}  stage={sess['stage']}  "
+        f"voice_fusion={voice_fusion}  voice_dominant='{voice_dominant}'",
+        flush=True,
+    )
+
+    # ── GREETING ──────────────────────────────────────────────────────────────
     if sess["stage"] == "greeting":
         sess["stage"] = "pre_screening"
         return jsonify({"message": ui("greeting", lang), "stage": "pre_screening"})
@@ -533,29 +649,30 @@ def chat():
 
         scores    = engine.calculate_screening_scores(sess["screening_answers"])
         condition = engine.determine_condition(scores)
+        print(f"[chat/screening] scores={scores}  condition={condition}", flush=True)
 
         if condition == "neutral":
             sess["stage"] = "done"
             return jsonify({"message": ui("fallback", lang)})
 
-        sess["condition"]     = condition
+        sess["condition"] = condition
+        sess["stage"]     = "thankyou"
+        cond_label        = _condition_label(condition, lang)
+        return jsonify({
+            "message": ui("thank_you", lang, condition=cond_label),
+            "stage":   "thankyou",
+        })
+
+    # ── THANKYOU → first feature question ────────────────────────────────────
+    if sess["stage"] == "thankyou":
         sess["stage"]         = "features"
         sess["feature_index"] = 0
-
-        print(f"[DEBUG] scores={scores}  condition={condition}", flush=True)
-
-        questions  = _feature_qs(condition)
-        cond_label = ui(
-            "condition_anxiety" if condition == "anxiety"
-            else "condition_stress", lang
-        )
-        first   = _resolve_feature(questions[0], lang)
-        payload = {
-            "message": ui("thank_you", lang, condition=cond_label)
-                       + "\n\n" + first["question"]
-        }
-        if first["options"]:
-            payload["options"] = first["options"]
+        condition = sess["condition"]
+        questions = _feature_qs(condition)
+        info      = _resolve_feature(questions[0], lang)
+        payload   = {"message": info["question"]}
+        if info["options"]:
+            payload["options"] = info["options"]
         return jsonify(payload)
 
     # ── FEATURE QUESTIONS ─────────────────────────────────────────────────────
@@ -565,10 +682,23 @@ def chat():
         idx       = sess["feature_index"]
         current_q = questions[idx]
 
+        # ── FIX 2: if input is blank, re-send current question immediately ──
+        if not user_input:
+            print(
+                f"[chat/features] Blank input at idx={idx} "
+                f"(col='{current_q['col']}') — re-sending question.",
+                flush=True,
+            )
+            info    = _resolve_feature(current_q, lang)
+            payload = {"message": info["question"]}
+            if info["options"]:
+                payload["options"] = info["options"]
+            return jsonify(payload)
+        # ────────────────────────────────────────────────────────────────────
+
         is_valid, cleaned, error_msg = validate_feature_input(
             user_input, current_q, lang
         )
-
         if not is_valid:
             info    = _resolve_feature(current_q, lang)
             payload = {"message": error_msg}
@@ -587,55 +717,123 @@ def chat():
                 payload["options"] = info["options"]
             return jsonify(payload)
 
-        # ── All features collected — run prediction ───────────────────────
+        # ══════════════════════════════════════════════════════════════════════
+        # ALL FEATURE QUESTIONS ANSWERED — begin fusion + prediction pipeline
+        # ══════════════════════════════════════════════════════════════════════
         sess["stage"] = "done"
+        level         = "medium"   # safe default
+        prediction    = None
+        features      = dict(sess["feature_answers"])
+
+        # ══════════════════════════════════════════════════════════════════════
+        # STAGE A — ML PREDICTION
+        # ══════════════════════════════════════════════════════════════════════
         try:
-            features = dict(sess["feature_answers"])
-            level    = "medium"
+            print(
+                f"[chat/stageA] Running ML for condition='{condition}'  "
+                f"features={features}",
+                flush=True,
+            )
+            prediction = engine.run_prediction(condition, features)
+            print(
+                f"[chat/stageA] Raw prediction={prediction!r}  "
+                f"type={type(prediction).__name__}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[chat/stageA] ❌ ML FAILED for condition='{condition}': {exc}",
+                flush=True,
+            )
+            print(
+                f"[chat/stageA] feature keys: {list(features.keys())}",
+                flush=True,
+            )
+            _tb.print_exc()
 
-            if condition == "stress":
-                for col, default in STRESS_DEFAULTS.items():
-                    if col not in features:
-                        features[col] = default
-
-                scale_cols = [
-                    "Have you recently experienced stress in your life?",
-                    "Have you noticed a rapid heartbeat or palpitations?",
-                    "Have you been dealing with anxiety or tension recently?",
-                    "Do you face any sleep problems or difficulties falling asleep?",
-                    "Have you been getting headaches more often than usual?",
-                    "Do you get irritated easily?",
-                    "Do you have trouble concentrating on your academic tasks?",
-                    "Have you been feeling sadness or low mood?",
-                    "Do you feel overwhelmed with your academic workload?",
-                    "Is your working environment unpleasant or stressful?",
-                ]
-                sc    = [float(features[c]) for c in scale_cols if c in features]
-                avg   = sum(sc) / len(sc) if sc else 3.0
-                level = "low" if avg <= 2.0 else "high" if avg > 3.5 else "medium"
-                print(f"[DEBUG] stress avg={avg:.2f}  level={level}", flush=True)
-
-            else:
-                prediction = engine.run_prediction(condition, features)
-                level      = (engine.map_prediction_to_level(prediction)
-                              or _map_level(prediction, condition))
+        if prediction is not None:
+            try:
+                mapped = engine.map_prediction_to_level(prediction)
+                level  = mapped if mapped else _map_level(prediction, condition)
                 print(
-                    f"[DEBUG] anxiety prediction={prediction}  level={level}",
+                    f"[chat/stageA] condition='{condition}'  "
+                    f"prediction={prediction!r}  text_level='{level}'",
                     flush=True,
                 )
+            except Exception as exc:
+                print(f"[chat/stageA] ⚠️  Level mapping error: {exc}", flush=True)
+                level = _map_level(prediction, condition)
 
-            cbt_text = build_cbt_message(
-                condition, level, lang,
-                policy_mode=policy_mode,
+        # ══════════════════════════════════════════════════════════════════════
+        # STAGE B — VOICE + TEXT FUSION
+        # ══════════════════════════════════════════════════════════════════════
+        try:
+            if prediction is not None:
+                try:
+                    level_int_for_fusion = int(prediction)
+                except (TypeError, ValueError):
+                    level_int_for_fusion = _LEVEL_TO_INT.get(level, 1)
+            else:
+                level_int_for_fusion = _LEVEL_TO_INT.get(level, 1)
+
+            print(
+                f"[chat/stageB] Calling combiner — "
+                f"condition='{condition}'  level_int={level_int_for_fusion}  "
+                f"voice_fusion={voice_fusion}  voice_dominant='{voice_dominant}'",
+                flush=True,
             )
-            return jsonify({
-                "message": cbt_text,
-                "level":   level,
-            })
+
+            combined = EmotionFusionCombiner.combine(
+                condition_text  = condition,
+                level_int_text  = level_int_for_fusion,
+                voice_fusion    = voice_fusion,
+                voice_dominant  = voice_dominant,
+                text_confidence = 0.70,
+            )
+
+            condition      = combined["condition"]
+            level          = combined["level"]
+            voice_dominant = combined["voice_dominant"]
+
+            print(
+                f"[chat/stageB] FUSION RESULT — "
+                f"mode={combined['fusion_mode']}  "
+                f"condition='{condition}'  level='{level}'  "
+                f"voice_dominant='{voice_dominant}'",
+                flush=True,
+            )
+            print(f"[chat/stageB] explanation: {combined['explanation']}", flush=True)
 
         except Exception as exc:
-            print(f"[ERROR] {exc}", flush=True)
-            return jsonify({"message": ui("fallback", lang)})
+            print(
+                f"[chat/stageB] ⚠️  EmotionFusionCombiner.combine() error: {exc}  "
+                f"— keeping text result: condition='{condition}'  level='{level}'",
+                flush=True,
+            )
+            _tb.print_exc()
+
+        # ══════════════════════════════════════════════════════════════════════
+        # STAGE C — CBT TEMPLATE SELECTION
+        # ══════════════════════════════════════════════════════════════════════
+        try:
+            cbt_text = build_cbt_message(
+                condition,
+                level,
+                lang,
+                policy_mode    = policy_mode,
+                voice_dominant = voice_dominant,
+            )
+        except Exception as exc:
+            print(f"[chat/stageC] ⚠️  build_cbt_message error: {exc}", flush=True)
+            _tb.print_exc()
+            cbt_text = ui("fallback", lang)
+
+        return jsonify({
+            "message":        cbt_text,
+            "level":          level,
+            "condition":      condition,
+            "voice_dominant": voice_dominant,
+        })
 
     return jsonify({"message": ui("session_done", lang)})
 
@@ -670,24 +868,66 @@ def predict_route():
     })
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  FEATURE 4 — PPO REWARD LOGGING
-# ══════════════════════════════════════════════════════════════════════════════
+@app.route("/debug-depression", methods=["POST"])
+def debug_depression():
+    body     = request.json or {}
+    features = body.get("features", {})
+    lang     = body.get("lang", "en")
+    result   = {
+        "features_received":   features,
+        "feature_keys":        list(features.keys()),
+        "raw_prediction":      None,
+        "raw_prediction_type": None,
+        "mapped_level":        None,
+        "template_found":      False,
+        "cbt_response":        None,
+        "error":               None,
+    }
+    try:
+        pred = engine.run_prediction("depression", features)
+        result["raw_prediction"]      = str(pred)
+        result["raw_prediction_type"] = type(pred).__name__
+    except Exception as exc:
+        result["error"] = f"PREDICTION ERROR: {exc}"
+        _tb.print_exc()
+        return jsonify(result), 200
+
+    try:
+        level = engine.map_prediction_to_level(pred) or _map_level(pred, "depression")
+        result["mapped_level"] = level
+    except Exception as exc:
+        result["error"] = f"LEVEL MAPPING ERROR: {exc}"
+        return jsonify(result), 200
+
+    try:
+        r = engine.generate_cbt_response("depression", level, lang=lang)
+        result["template_found"] = r is not None
+        result["cbt_response"]   = r
+    except Exception as exc:
+        result["error"] = f"CBT RESPONSE ERROR: {exc}"
+
+    return jsonify(result), 200
+
+
+@app.route("/debug-session/<session_id>", methods=["GET"])
+def debug_session(session_id):
+    sess = sessions.get(session_id)
+    if not sess:
+        return jsonify({"error": f"Session '{session_id}' not found"}), 404
+    return jsonify(dict(sess)), 200
+
 
 _feedback_log: list = []
 
 
 @app.route("/feedback", methods=["POST"])
 def feedback_route():
-    body = request.get_json(silent=True) or {}
-
+    body     = request.get_json(silent=True) or {}
     required = ("session_id", "type")
     if not all(k in body for k in required):
         return jsonify({"error": "Missing required fields"}), 400
-
     if body.get("type") not in ("up", "down"):
         return jsonify({"error": "type must be 'up' or 'down'"}), 400
-
     entry = {
         "session_id": body.get("session_id"),
         "msg_idx":    body.get("msg_idx"),
@@ -697,11 +937,9 @@ def feedback_route():
     }
     _feedback_log.append(entry)
     print(f"[FEEDBACK] {entry}", flush=True)
-
     total      = len(_feedback_log)
     positives  = sum(1 for e in _feedback_log if e["type"] == "up")
     avg_reward = (positives * 1 + (total - positives) * -1) / total if total else 0
-
     return jsonify({
         "status":        "recorded",
         "total_signals": total,
@@ -727,37 +965,19 @@ def feedback_summary():
     })
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  DEBUG ENDPOINT
-# ══════════════════════════════════════════════════════════════════════════════
-
 @app.route("/debug-voice", methods=["POST"])
 def debug_voice():
-    """
-    Diagnostic endpoint.
-    curl -X POST http://localhost:5000/debug-voice \
-         -F "audio=@/path/to/recording.webm" \
-         -F "lang=en"
-    """
     if "audio" not in request.files:
         return jsonify({"error": "No audio field in request"}), 400
-
     audio_file = request.files["audio"]
     lang       = request.form.get("lang", "en").strip().lower()
     lang       = lang if lang in SUPPORTED_LANGUAGES else "en"
-
     suffix     = _audio_suffix(audio_file)
     tmp        = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     audio_path = tmp.name
     tmp.close()
-
     try:
         audio_file.save(audio_path)
-        print(
-            f"[debug-voice] {os.path.getsize(audio_path)} bytes  "
-            f"suffix={suffix}  lang={lang}",
-            flush=True,
-        )
         handler = VoiceInputHandler()
         result  = handler.run_pipeline(audio_path, lang=lang)
         return jsonify(result), 200
@@ -765,10 +985,6 @@ def debug_voice():
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
 def home():

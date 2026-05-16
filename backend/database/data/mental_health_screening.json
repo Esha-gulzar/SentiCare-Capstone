@@ -1,48 +1,68 @@
 {
-  "type": "mental_health_screening",
-  "description": "Initial symptom screening for anxiety, stress, and depression.",
-  "scale": "0 = Not at all, 1 = Several days, 2 = More than half the days, 3 = Nearly every day",
   "questions": [
     {
       "id": "feeling_nervous",
-      "question": "Over the past two weeks, how often have you felt nervous, anxious, or on edge?",
-      "domain": "anxiety"
+      "domain": "anxiety",
+      "question_en": "Over the past two weeks, how often have you felt nervous, anxious, or on edge?",
+      "question_ur": "گزشتہ دو ہفتوں میں، آپ کتنی بار گھبراہٹ، بے چینی یا پریشانی محسوس کرتے رہے؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "uncontrollable_worry",
-      "question": "How often have you been unable to stop or control worrying?",
-      "domain": "anxiety"
+      "domain": "anxiety",
+      "question_en": "How often have you been unable to stop or control worrying?",
+      "question_ur": "آپ کتنی بار فکروں کو روک یا کنٹرول نہیں کر پائے؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "restlessness",
-      "question": "How often have you felt restless or hard to relax?",
-      "domain": "anxiety"
+      "domain": "anxiety",
+      "question_en": "How often have you felt restless or hard to relax?",
+      "question_ur": "آپ کتنی بار بے چین یا سکون میں رہنا مشکل محسوس ہوا؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "feeling_down",
-      "question": "How often have you felt down, depressed, or hopeless?",
-      "domain": "depression"
+      "domain": "depression",
+      "question_en": "How often have you felt down, depressed, or hopeless?",
+      "question_ur": "آپ کتنی بار اداسی، مایوسی یا ناامیدی محسوس کی؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "loss_of_interest",
-      "question": "How often have you had little interest or pleasure in doing things?",
-      "domain": "depression"
+      "domain": "depression",
+      "question_en": "How often have you had little interest or pleasure in doing things?",
+      "question_ur": "آپ کتنی بار کسی کام میں دلچسپی یا خوشی محسوس نہیں ہوئی؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "fatigue",
-      "question": "How often have you felt tired or low in energy?",
-      "domain": "depression"
+      "domain": "depression",
+      "question_en": "How often have you felt tired or low in energy?",
+      "question_ur": "آپ کتنی بار تھکاوٹ یا توانائی کی کمی محسوس کی؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "overwhelmed",
-      "question": "How often have you felt overwhelmed or unable to cope with daily responsibilities?",
-      "domain": "stress"
+      "domain": "stress",
+      "question_en": "How often have you felt overwhelmed or unable to cope with daily responsibilities?",
+      "question_ur": "آپ کتنی بار اپنی روزمرہ ذمہ داریاں نبھانے میں خود کو ناکارہ محسوس کیا؟",
+      "min": 0,
+      "max": 3
     },
     {
       "id": "irritability",
-      "question": "How often have you been easily irritated or frustrated?",
-      "domain": "stress"
+      "domain": "stress",
+      "question_en": "How often have you been easily irritated or frustrated?",
+      "question_ur": "آپ کتنی بار جلدی چڑچڑاپن یا غصہ محسوس کیا؟",
+      "min": 0,
+      "max": 3
     }
   ]
 }
-

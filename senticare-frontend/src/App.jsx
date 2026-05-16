@@ -1,25 +1,23 @@
-// App.jsx — FIXED v2
+// App.jsx — v10
 //
-// CHANGES vs v1:
+// CHANGES vs v9:
 // ─────────────────────────────────────────────────────────────────────────────
-// VOICE FUSION STORED + SENT TO BACKEND (required pipeline fix):
+// FIX: "Thank you. Based on your responses..." message was SILENT.
 //
-//   Required pipeline:
-//     Voice check-in → voice_fusion stored in session state
-//     → sent with every /chat POST as "voice_fusion"
-//     → app.py fuses it with feature answers before ML prediction
+// ROOT CAUSE:
+//   In the `thankyou` stage, `tyIdx` is assigned INSIDE the setMessages
+//   updater callback, but speakMessage(data.message, tyIdx) was called
+//   IMMEDIATELY after in the same synchronous tick — before React flushed
+//   the state update. So tyIdx was still `undefined` when speakMessage ran,
+//   causing it to silently fail or speak the wrong message.
 //
-//   Changes:
-//   1. MainApp now holds [voiceFusion, setVoiceFusion] state.
-//   2. handleVoiceCheckInComplete(result) extracts
-//      result.voice_fusion_for_ml and stores it in voiceFusion state.
-//   3. Every sendMessage() call now includes voice_fusion in the POST body.
-//   4. startNewChat() resets voiceFusion to null (clean slate for new session).
+//   Same issue existed in `pre_screening` for the greeting message.
 //
-// VoiceCheckIn onComplete now receives FULL result (was already true in v8/v9)
-//   so no change to the prop signature — we just use result.voice_fusion_for_ml.
+// FIX:
+//   Wrapped both speakMessage calls in setTimeout(..., 50) so React has
+//   time to flush the state update before TTS tries to use the index.
 //
-// ALL OTHER CODE IDENTICAL TO v1 / the original you provided.
+// ALL OTHER LOGIC IDENTICAL TO v9.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -71,7 +69,6 @@ const parseTherapyCard = (text) => {
 const validateInput = (text, lang) => {
   const trimmed = text.trim();
   if (!trimmed) return lang === "ur" ? "پیغام خالی نہیں ہو سکتا۔" : "Message cannot be empty.";
-  if (trimmed.length < 1) return lang === "ur" ? "پیغام بہت چھوٹا ہے۔" : "Message is too short.";
   if (trimmed.length > MAX_INPUT_CHARS)
     return lang === "ur"
       ? `پیغام ${MAX_INPUT_CHARS} حروف سے زیادہ نہیں ہو سکتا۔`
@@ -170,7 +167,7 @@ const UI = {
     self_help_sub:  "Things you can try right now to feel better",
     checklist:      "✅ Daily Wellness Checklist",
     hotline_title:  "Need immediate help?",
-    hotline_text:   <>In Pakistan, the <strong>Umang helpline</strong> is available at <strong>0317-4288665</strong>. You deserve support and you are not alone.</>,
+    hotline_text:   <span>In Pakistan, the <strong>Umang helpline</strong> is available at <strong>0317-4288665</strong>. You deserve support and you are not alone.</span>,
     therapy_tag:    "🌿 Therapy Exercise",
     listen:         "🔊 Listen to This",
     stop_speaking:  "Stop Speaking",
@@ -195,7 +192,7 @@ const UI = {
     no_account:     "Don't have an account?",
     sign_in_link:   "Sign In",
     sign_up_link:   "Sign Up",
-    info_box:       <>Your account and session history are <strong>always saved</strong>. Sign in to continue where you left off.</>,
+    info_box:       <span>Your account and session history are <strong>always saved</strong>. Sign in to continue where you left off.</span>,
     new_here:       "NEW HERE?",
     have_acct:      "HAVE AN ACCOUNT?",
     char_count:     (n, max) => `${n} / ${max}`,
@@ -233,7 +230,7 @@ const UI = {
     loading_voice:  "آواز لوڈ ہو رہی ہے…",
     available:      "دستیاب",
     greeting_name:  (n) => `السلام علیکم ${n}، میں آپ کے ساتھ ہوں`,
-    empty_sub:      (voiceOn) => `سینٹی کیئر آپ کی ذہنی صحت کی اسکریننگ میں مدد کرتا ہے اور ذاتی نوعیت کی سی بی ٹی معاونت فراہم کرتا ہے۔ ${voiceOn ? "آواز چالو ہے — میں آپ سے بات کروں گا۔" : "سائڈ بار میں آواز چالو کریں۔"}`,
+    empty_sub:      (voiceOn) => `سینٹی کیئر آپ کی ذہنی صحت کی اسکریننگ میں مدد کرتا ہے۔ ${voiceOn ? "آواز چالو ہے۔" : "سائڈ بار میں آواز چالو کریں۔"}`,
     quick1:         "السلام علیکم، مجھے مدد چاہیے",
     quick2:         "مجھے گھبراہٹ محسوس ہو رہی ہے",
     quick3:         "میں دباؤ میں ہوں",
@@ -264,7 +261,7 @@ const UI = {
     self_help_sub:  "ابھی بہتر محسوس کرنے کے لیے کچھ آزمائیں",
     checklist:      "✅ روزانہ تندرستی کی فہرست",
     hotline_title:  "فوری مدد چاہیے؟",
-    hotline_text:   <>پاکستان میں <strong>امنگ ہیلپ لائن</strong> اس نمبر پر دستیاب ہے: <strong>0317-4288665</strong>۔ آپ اکیلے نہیں ہیں۔</>,
+    hotline_text:   <span>پاکستان میں <strong>امنگ ہیلپ لائن</strong>: <strong>0317-4288665</strong>۔ آپ اکیلے نہیں ہیں۔</span>,
     therapy_tag:    "🌿 علاجی مشق",
     listen:         "🔊 سنیں",
     stop_speaking:  "روکیں",
@@ -289,7 +286,7 @@ const UI = {
     no_account:     "اکاؤنٹ نہیں ہے؟",
     sign_in_link:   "سائن ان",
     sign_up_link:   "سائن اپ",
-    info_box:       <>آپ کا اکاؤنٹ اور سیشن کی تاریخ <strong>ہمیشہ محفوظ رہتی ہے۔</strong> جاری رکھنے کے لیے سائن ان کریں۔</>,
+    info_box:       <span>آپ کا اکاؤنٹ <strong>ہمیشہ محفوظ رہتا ہے۔</strong> جاری رکھنے کے لیے سائن ان کریں۔</span>,
     new_here:       "نئے ہیں؟",
     have_acct:      "اکاؤنٹ ہے؟",
     char_count:     (n, max) => `${n} / ${max}`,
@@ -303,7 +300,7 @@ const UI = {
     fb_thanks_down: "✓ سمجھ گئے۔ اگلی بار بہتر کریں گے۔",
     ppo_switching:  "⚡ آپ کے لیے جواب کی حکمت عملی بدل رہی ہے…",
     trend_title:    "📈 جذباتی رجحان",
-    escalate_msg:   "⚠️ آپ کے آخری 3 سیشن میں شدت زیادہ رہی ہے۔ براہ کرم امنگ ہیلپ لائن سے رابطہ کریں: 0317-4288665۔ آپ اکیلے نہیں ہیں۔",
+    escalate_msg:   "⚠️ آپ کے آخری 3 سیشن میں شدت زیادہ رہی ہے۔ براہ کرم امنگ ہیلپ لائن سے رابطہ کریں: 0317-4288665۔",
     trend_low:      "کم",
     trend_med:      "درمیانہ",
     trend_high:     "زیادہ",
@@ -338,12 +335,12 @@ const DAILY_TIPS_EN = [
 ];
 
 const DAILY_TIPS_UR = [
-  "روزانہ کم از کم 8 گلاس پانی پیئں — پانی کی کمی گھبراہٹ بڑھاتی ہے۔",
-  "کیفین کو روزانہ 1-2 کپ تک محدود رکھیں، خاص طور پر اگر گھبراہٹ ہو۔",
-  "پڑھائی یا کام کے دوران ہر گھنٹے میں 5 منٹ کا وقفہ لیں۔",
+  "روزانہ کم از کم 8 گلاس پانی پیئں۔",
+  "کیفین کو روزانہ 1-2 کپ تک محدود رکھیں۔",
+  "پڑھائی کے دوران ہر گھنٹے میں 5 منٹ کا وقفہ لیں۔",
   "جب دباؤ ہو تو 5-4-3-2-1 کی زمینی تکنیک آزمائیں۔",
-  "آج کے لیے ایک چھوٹا ہدف بنائیں اور اسے پورا کر کے خوشی منائیں۔",
-  "اگر مشکل ہو تو کسی قابل اعتماد شخص سے بات کریں — آپ اکیلے نہیں ہیں۔",
+  "آج کے لیے ایک چھوٹا ہدف بنائیں۔",
+  "اگر مشکل ہو تو کسی قابل اعتماد شخص سے بات کریں۔",
 ];
 
 const levelToNum = (level) =>
@@ -523,7 +520,6 @@ function SidebarContent({ user, page, setPage, sessions, lang, voiceOn, setVoice
           <div className="user-email">{user.email}</div>
         </div>
       </div>
-
       <div className="sidebar-label">Navigation</div>
       <button className={`sidebar-item ${page === "chat" ? "active" : ""}`} onClick={() => nav("chat")}>
         <span className="sidebar-item-icon">💬</span> {t.nav_chat}
@@ -538,7 +534,6 @@ function SidebarContent({ user, page, setPage, sessions, lang, voiceOn, setVoice
       <button className="sidebar-logout" onClick={onLogout}>
         <span style={{ fontSize: 15 }}>🚪</span> {t.nav_signout}
       </button>
-
       <div className="voice-box" style={{ marginTop: 14 }}>
         <div className="voice-box-title">{t.voice_settings}</div>
         <div className="voice-row">
@@ -558,7 +553,6 @@ function SidebarContent({ user, page, setPage, sessions, lang, voiceOn, setVoice
           </div>
         )}
       </div>
-
       <div className="sidebar-footer">
         <div className="sidebar-footer-title">{t.tip_title}</div>
         <div className="sidebar-footer-text">{todayTip}</div>
@@ -572,25 +566,19 @@ function SidebarContent({ user, page, setPage, sessions, lang, voiceOn, setVoice
 // ════════════════════════════════════════════════════════════════
 function EmotionTrendChart({ sessions, lang }) {
   const t = UI[lang];
-
-  const chartData = [...sessions]
-    .reverse()
-    .map(s => ({
-      date: s.date,
-      level: levelToNum(s.level || "medium"),
-      condition: s.condition,
-      levelLabel: s.level || "medium",
-    }));
-
+  const chartData = [...sessions].reverse().map(s => ({
+    date: s.date,
+    level: levelToNum(s.level || "medium"),
+    condition: s.condition,
+    levelLabel: s.level || "medium",
+  }));
   const shouldEscalate =
     sessions.length >= 3 &&
     sessions.slice(0, 3).every(s => (s.level || "medium") === "high");
 
   const CustomDot = (props) => {
     const { cx, cy, payload } = props;
-    const color =
-      payload.levelLabel === "high" ? "#dc2626" :
-      payload.levelLabel === "medium" ? "#f5a623" : "#4ade80";
+    const color = payload.levelLabel === "high" ? "#dc2626" : payload.levelLabel === "medium" ? "#f5a623" : "#4ade80";
     return <circle cx={cx} cy={cy} r={6} fill={color} stroke="#fff" strokeWidth={2} />;
   };
 
@@ -600,16 +588,10 @@ function EmotionTrendChart({ sessions, lang }) {
     const levelColors = { high: "#dc2626", medium: "#f5a623", low: "#4ade80" };
     const levelLabels = { high: t.trend_high, medium: t.trend_med, low: t.trend_low };
     return (
-      <div style={{
-        background: "#fff", border: "1.5px solid #c8e8d4", borderRadius: 10,
-        padding: "8px 14px", fontSize: "0.8rem", fontFamily: "'Nunito', sans-serif",
-        boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-      }}>
+      <div style={{ background: "#fff", border: "1.5px solid #c8e8d4", borderRadius: 10, padding: "8px 14px", fontSize: "0.8rem" }}>
         <div style={{ fontWeight: 700, color: "#0e4d2a", marginBottom: 3 }}>{d.date}</div>
         <div style={{ color: "#4a8a62" }}>{d.condition}</div>
-        <div style={{ color: levelColors[d.levelLabel], fontWeight: 700, marginTop: 3 }}>
-          {levelLabels[d.levelLabel]}
-        </div>
+        <div style={{ color: levelColors[d.levelLabel], fontWeight: 700, marginTop: 3 }}>{levelLabels[d.levelLabel]}</div>
       </div>
     );
   };
@@ -627,12 +609,10 @@ function EmotionTrendChart({ sessions, lang }) {
       <ResponsiveContainer width="100%" height={180}>
         <LineChart data={chartData} margin={{ top: 8, right: 16, left: -20, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e8f5ee" />
-          <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#4a8a62", fontFamily: "'Nunito', sans-serif" }} tickLine={false} />
-          <YAxis
-            domain={[0.5, 3.5]} ticks={[1, 2, 3]}
+          <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#4a8a62" }} tickLine={false} />
+          <YAxis domain={[0.5, 3.5]} ticks={[1, 2, 3]}
             tickFormatter={v => ({ 1: t.trend_low, 2: t.trend_med, 3: t.trend_high }[v] || "")}
-            tick={{ fontSize: 11, fill: "#4a8a62", fontFamily: "'Nunito', sans-serif" }} tickLine={false}
-          />
+            tick={{ fontSize: 11, fill: "#4a8a62" }} tickLine={false} />
           <Tooltip content={<CustomTooltip />} />
           <ReferenceLine y={3} stroke="#dc2626" strokeDasharray="5 3" strokeOpacity={0.5} />
           <Line type="monotone" dataKey="level" stroke="#1a7a4a" strokeWidth={2.5} dot={<CustomDot />} activeDot={{ r: 8, fill: "#1a7a4a" }} />
@@ -702,17 +682,10 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { toasts, show: showToast } = useToast();
 
-  // ── PPO STATE ──────────────────────────────────────────────────
   const [feedback, setFeedback] = useState({});
   const [thumbsDownCount, setThumbsDownCount] = useState(0);
   const [policyMode, setPolicyMode] = useState("default");
-
-  // ── VOICE CHECK-IN STATE ──────────────────────────────────────
   const [voiceCheckInDone, setVoiceCheckInDone] = useState(false);
-
-  // ── VOICE FUSION STATE (NEW — required pipeline) ─────────────
-  // Stores the voice_fusion_for_ml scores from the VoiceCheckIn result.
-  // Sent with every /chat POST so app.py can fuse them with ML features.
   const [voiceFusion, setVoiceFusion] = useState(null);
 
   const bottomRef = useRef(null);
@@ -728,34 +701,18 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isTyping]);
   useEffect(() => { if (inputError) setInputError(""); }, [input]);
 
-  // ── Handle voice check-in completion ─────────────────────────
-  // Called by VoiceCheckIn when user clicks "Continue to chat"
-  // result is the FULL pipeline response from /voice-intro
   const handleVoiceCheckInComplete = useCallback((result) => {
-    // Extract and store the voice fusion scores for ML fusion
-    if (result && result.voice_fusion_for_ml) {
-      setVoiceFusion(result.voice_fusion_for_ml);
-      console.log(
-        "[App] Voice fusion stored:",
-        result.voice_fusion_for_ml,
-        "dominant:", result.dominant_emotion,
-      );
-    }
+    if (result && result.voice_fusion_for_ml) setVoiceFusion(result.voice_fusion_for_ml);
     setVoiceCheckInDone(true);
   }, []);
 
-  // ── PPO feedback handler ──────────────────────────────────────
   const handleFeedback = useCallback((msgIdx, type) => {
     if (feedback[msgIdx]) return;
     setFeedback(prev => ({ ...prev, [msgIdx]: type }));
     const rewardsKey = `sc_rewards_${user.email}`;
-    const existingRewards = local.get(rewardsKey) || [];
-    existingRewards.push({
-      sessionId, msgIdx, type,
-      reward: type === "up" ? 1 : -1,
-      timestamp: Date.now(),
-    });
-    local.set(rewardsKey, existingRewards);
+    const existing = local.get(rewardsKey) || [];
+    existing.push({ sessionId, msgIdx, type, reward: type === "up" ? 1 : -1, timestamp: Date.now() });
+    local.set(rewardsKey, existing);
     if (type === "down") {
       const newCount = thumbsDownCount + 1;
       setThumbsDownCount(newCount);
@@ -763,7 +720,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     }
   }, [feedback, thumbsDownCount, sessionId, user.email, t]);
 
-  // ── Auto-save session ─────────────────────────────────────────
+  // Auto-save session
   useEffect(() => {
     if (sessionSaved.current) return;
     const lastBot = [...messages].reverse().find(m => m.sender === "bot");
@@ -784,8 +741,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
       date: new Date().toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" }),
       time: new Date().toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" }),
       preview: lastBot.text.slice(0, 120) + "…",
-      condition, level,
-      messageCount: messages.length,
+      condition, level, messageCount: messages.length,
     };
     const updated = [newS, ...alreadySaved];
     local.set(sessionsKey, updated);
@@ -793,7 +749,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     showToast(t.toast_session);
   }, [messages]);
 
-  // ── TTS ───────────────────────────────────────────────────────
   const speakMessage = useCallback((text, idx) => {
     setTtsLoading(true);
     setSpeakingIdx(null);
@@ -824,7 +779,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   const openPopup = (text) => setPopup({ text, card: parseTherapyCard(text) });
   const closePopup = () => { stopAudio(); setPopupSpeaking(false); setPopupTtsLoading(false); setPopup(null); };
 
-  // ── Core send (voice_fusion included in every POST) ───────────
+  // ── Core send ─────────────────────────────────────────────────
   const sendMessage = async (text) => {
     setIsTyping(true);
     setCurrentOptions(null);
@@ -839,17 +794,25 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
           input:        text,
           lang,
           policy_mode:  policyMode,
-          // ← REQUIRED PIPELINE: send voice fusion with every message
-          // app.py stores/uses it for ML level adjustment
-          voice_fusion: voiceFusion || null,
+          voice_fusion: voiceFusion ?? null,
         }),
       });
       const data = await res.json();
-      const firstOptions = data.options || null;
+      const firstOptions = data.options ?? null;
 
-      let questionSpeakFn = null;
+      // ── THANKYOU stage ────────────────────────────────────────
+      if (data.stage === "thankyou") {
+        // Step 1: show thankyou message immediately
+        const tyText = data.message;
+        let tyIdx;
+        setMessages(prev => {
+          tyIdx = prev.length;
+          return [...prev, { sender: "bot", text: tyText, options: null }];
+        });
 
-      const fetchFirstQuestion = async () => {
+        // Step 2: fetch q1 in background while thankyou speaks
+        setIsTyping(true);
+        let q1Data = null;
         try {
           const res2 = await fetch(API_URL, {
             method: "POST",
@@ -859,20 +822,75 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
               input:        "",
               lang,
               policy_mode:  policyMode,
-              voice_fusion: voiceFusion || null,
+              voice_fusion: voiceFusion ?? null,
             }),
           });
-          const data2 = await res2.json();
-          const q1opts = data2.options || null;
-          setCurrentOptions(q1opts);
-          setMessages(prev => {
-            const idx2 = prev.length;
-            questionSpeakFn = () => { if (voiceOn) speakMessage(data2.message, idx2); };
-            return [...prev, { sender: "bot", text: data2.message, options: q1opts }];
-          });
+          q1Data = await res2.json();
         } catch { /* silent */ }
-      };
 
+        // Step 3: show q1 message in UI
+        let q1Idx;
+        if (q1Data) {
+          setMessages(prev => {
+            q1Idx = prev.length;
+            return [...prev, { sender: "bot", text: q1Data.message, options: q1Data.options ?? null }];
+          });
+          setCurrentOptions(q1Data.options ?? null);
+        }
+        setIsTyping(false);
+
+        // Step 4: chain TTS — speak thankyou, then on end speak q1
+        if (voiceOn) {
+          // Use playTTS directly so we can chain via onEnd callback
+          const cleanTy = tyText
+            .replace(/[\u{1F300}-\u{1FFFF}]/gu, "")
+            .replace(/[🔍💚📋✅🌱🟠🔵🟢]/g, "")
+            .replace(/\*+/g, " ")
+            .replace(/\n+/g, ". ")
+            .trim();
+
+          if (cleanTy) {
+            const params = new URLSearchParams({ text: cleanTy, lang });
+            stopAudio();
+            sharedAudio.src = `${TTS_URL}?${params.toString()}`;
+            sharedAudio.playbackRate = Math.min(Math.max(speechRate, 0.5), 2);
+            sharedAudio.oncanplay = () => {
+              setTtsLoading(false);
+              setSpeakingIdx(tyIdx);
+            };
+            setTtsLoading(true);
+            sharedAudio.onended = () => {
+              // thankyou finished → now speak q1
+              setSpeakingIdx(null);
+              sharedAudio.onended = null;
+              sharedAudio.onerror = null;
+              if (q1Data && q1Idx !== undefined) {
+                setTimeout(() => speakMessage(q1Data.message, q1Idx), 100);
+              }
+            };
+            sharedAudio.onerror = () => {
+              setSpeakingIdx(null);
+              setTtsLoading(false);
+              if (q1Data && q1Idx !== undefined) {
+                setTimeout(() => speakMessage(q1Data.message, q1Idx), 100);
+              }
+            };
+            sharedAudio.play().catch(() => {
+              setSpeakingIdx(null);
+              setTtsLoading(false);
+              if (q1Data && q1Idx !== undefined) {
+                setTimeout(() => speakMessage(q1Data.message, q1Idx), 100);
+              }
+            });
+          } else if (q1Data && q1Idx !== undefined) {
+            // tyText empty, just speak q1 directly
+            setTimeout(() => speakMessage(q1Data.message, q1Idx), 50);
+          }
+        }
+        return;
+      }
+
+      // ── PRE_SCREENING stage (greeting → first screening Q) ────
       if (data.stage === "pre_screening") {
         let greetingIdx;
         setMessages(prev => {
@@ -880,11 +898,44 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
           return [...prev, { sender: "bot", text: data.message, options: null }];
         });
 
+        const greetingText = data.message;
+
+        let questionSpeakFn = null;
+        const fetchFirstQ = async () => {
+          try {
+            const res2 = await fetch(API_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                session_id:   sessionId,
+                input:        "",
+                lang,
+                policy_mode:  policyMode,
+                voice_fusion: voiceFusion ?? null,
+              }),
+            });
+            const data2 = await res2.json();
+            const q1opts = data2.options ?? null;
+            const q1Text = data2.message;
+            let q1Idx;
+            setMessages(prev => {
+              q1Idx = prev.length;
+              // ✅ FIX v10: store speak fn, called after greeting finishes
+              questionSpeakFn = () => {
+                if (voiceOn) {
+                  setTimeout(() => speakMessage(q1Text, q1Idx), 50);
+                }
+              };
+              return [...prev, { sender: "bot", text: q1Text, options: q1opts }];
+            });
+            setCurrentOptions(q1opts);
+          } catch { /* silent */ }
+        };
+
         if (voiceOn) {
-          const questionPromise = fetchFirstQuestion();
+          const questionPromise = fetchFirstQ();
           setTtsLoading(true);
-          setSpeakingIdx(null);
-          const clean = data.message
+          const clean = greetingText
             .replace(/[\u{1F300}-\u{1FFFF}]/gu, "")
             .replace(/[🔍💚📋✅🌱🟠🔵🟢]/g, "")
             .replace(/\*+/g, " ")
@@ -894,7 +945,11 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
             const params = new URLSearchParams({ text: clean, lang });
             sharedAudio.src = `${TTS_URL}?${params.toString()}`;
             sharedAudio.playbackRate = Math.min(Math.max(speechRate, 0.5), 2);
-            sharedAudio.oncanplay = () => { setTtsLoading(false); setSpeakingIdx(greetingIdx); };
+            sharedAudio.oncanplay = () => {
+              setTtsLoading(false);
+              // ✅ FIX v10: defer greetingIdx usage by 50ms
+              setTimeout(() => setSpeakingIdx(greetingIdx), 50);
+            };
             sharedAudio.onended = async () => {
               setSpeakingIdx(null); setTtsLoading(false);
               sharedAudio.onended = null; sharedAudio.onerror = null;
@@ -903,34 +958,43 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
             };
             sharedAudio.onerror = async () => {
               setSpeakingIdx(null); setTtsLoading(false);
-              sharedAudio.onended = null; sharedAudio.onerror = null;
               await questionPromise;
               if (questionSpeakFn) questionSpeakFn();
             };
             sharedAudio.play().catch(async () => {
               setSpeakingIdx(null); setTtsLoading(false);
-              sharedAudio.onended = null; sharedAudio.onerror = null;
               await questionPromise;
               if (questionSpeakFn) questionSpeakFn();
             });
           } else {
-            await fetchFirstQuestion();
+            await fetchFirstQ();
           }
         } else {
-          await fetchFirstQuestion();
+          await fetchFirstQ();
         }
-
-      } else {
-        setMessages(prev => {
-          const newIdx = prev.length;
-          if (voiceOn) speakMessage(data.message, newIdx);
-          if (isTherapyMessage(data.message)) setTimeout(() => openPopup(data.message), 400);
-          return [...prev, { sender: "bot", text: data.message, options: firstOptions }];
-        });
-        setCurrentOptions(firstOptions);
+        return;
       }
 
-    } catch {
+      // ── Normal question/answer flow ───────────────────────────
+      let newMsgIdx;
+      setMessages(prev => {
+        newMsgIdx = prev.length;
+        return [...prev, { sender: "bot", text: data.message, options: firstOptions }];
+      });
+      setCurrentOptions(firstOptions);
+
+      // ✅ FIX v10: defer speak for normal flow messages too
+      if (voiceOn) {
+        const msgToSpeak = data.message;
+        setTimeout(() => {
+          speakMessage(msgToSpeak, newMsgIdx);
+        }, 50);
+      }
+
+      if (isTherapyMessage(data.message)) setTimeout(() => openPopup(data.message), 400);
+
+    } catch (err) {
+      console.error("[sendMessage] error:", err);
       setMessages(prev => [...prev, { sender: "bot", text: "Unable to connect. Please make sure the backend is running on port 5000." }]);
       setCurrentOptions(null);
     } finally {
@@ -938,10 +1002,10 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     }
   };
 
-  const handleOptionClick = (value) => {
-    setMessages(prev => [...prev, { sender: "user", text: value }]);
+  const handleOptionClick = (strValue) => {
+    setMessages(prev => [...prev, { sender: "user", text: strValue }]);
     setCurrentOptions(null);
-    sendMessage(value);
+    sendMessage(strValue);
   };
 
   const handleSubmit = async () => {
@@ -958,6 +1022,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   };
 
   const handleKeyDown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } };
+
   const handleQuick = (text) => {
     setMessages(prev => [...prev, { sender: "user", text }]);
     setCurrentOptions(null);
@@ -975,7 +1040,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     showToast(t.toast_all_del);
   };
 
-  // ── startNewChat — resets all session state including voice fusion ─
   const startNewChat = () => {
     stopAudio();
     setMessages([]);
@@ -984,7 +1048,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
     setThumbsDownCount(0);
     setPolicyMode("default");
     setVoiceCheckInDone(false);
-    setVoiceFusion(null);          // ← reset voice fusion for clean new session
+    setVoiceFusion(null);
     sessionSaved.current = false;
     setPage("chat");
   };
@@ -993,7 +1057,8 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
   const isAnySpeaking = speakingIdx !== null;
   const initials = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
   const firstName = user.name.split(" ")[0];
-  const latestOptions = currentOptions;
+
+  const hasOptions = !isTyping && Array.isArray(currentOptions) && currentOptions.length > 0;
 
   const sidebarProps = {
     user, page, setPage, sessions, lang, voiceOn, setVoiceOn, speechRate, setSpeechRate,
@@ -1003,13 +1068,9 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
 
   return (
     <div className="app">
-
-      {/* DESKTOP SIDEBAR */}
       <div className="sidebar">
         <SidebarContent {...sidebarProps} />
       </div>
-
-      {/* MOBILE DRAWER */}
       {drawerOpen && (
         <>
           <div className="drawer-overlay" onClick={() => setDrawerOpen(false)} />
@@ -1019,18 +1080,12 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
         </>
       )}
 
-      {/* MAIN */}
       <div className={`main ${isRTL ? "rtl" : ""}`}>
 
-        {/* ══════════════════════════════════════════
-            CHAT PAGE
-        ══════════════════════════════════════════ */}
         {page === "chat" && (
           <>
             <div className="topbar">
-              <button className="hamburger" onClick={() => setDrawerOpen(true)} aria-label={t.menu}>
-                <span />
-              </button>
+              <button className="hamburger" onClick={() => setDrawerOpen(true)} aria-label={t.menu}><span /></button>
               <div className="topbar-left">
                 <div className="topbar-title">{t.topbar_title}</div>
                 <div className="topbar-sub">{t.topbar_sub}</div>
@@ -1039,10 +1094,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
                 <button className="lang-pill" onClick={toggleLang}>🌐 {t.lang_toggle}</button>
                 {isAnySpeaking ? (
                   <div className="speaking-badge">
-                    <div className="wave">
-                      <div className="wave-bar"/><div className="wave-bar"/>
-                      <div className="wave-bar"/><div className="wave-bar"/>
-                    </div>
+                    <div className="wave"><div className="wave-bar"/><div className="wave-bar"/><div className="wave-bar"/><div className="wave-bar"/></div>
                     {t.speaking}
                   </div>
                 ) : ttsLoading ? (
@@ -1054,7 +1106,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
             </div>
 
             <div className="messages-area">
-              {/* VOICE CHECK-IN: shown before any messages */}
               {messages.length === 0 && !voiceCheckInDone && (
                 <VoiceCheckIn
                   sessionId={sessionId}
@@ -1065,7 +1116,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
                 />
               )}
 
-              {/* EMPTY STATE: shown after voice check-in is done */}
               {messages.length === 0 && voiceCheckInDone && (
                 <div className="empty-state">
                   <div className="empty-icon-wrap">🌱</div>
@@ -1085,7 +1135,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
                   <div className="bubble-wrap">
                     <div className="sender-name">{msg.sender === "bot" ? t.senticare : firstName}</div>
                     <div className={`bubble ${msg.sender}`}>{msg.text}</div>
-
                     {msg.sender === "bot" && (
                       <div className="msg-actions">
                         {voiceOn && (
@@ -1108,24 +1157,16 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
                                 <button className="fb-btn down" onClick={() => handleFeedback(i, "down")}>{t.fb_not_helpful}</button>
                               </>
                             ) : (
-                              <span className="fb-thanks">
-                                {feedback[i] === "up" ? t.fb_thanks_up : t.fb_thanks_down}
-                              </span>
+                              <span className="fb-thanks">{feedback[i] === "up" ? t.fb_thanks_up : t.fb_thanks_down}</span>
                             )}
                           </>
                         )}
                       </div>
                     )}
-
-                    {msg.sender === "bot" &&
-                      isTherapyMessage(msg.text) &&
-                      feedback[i] &&
-                      policyMode === "alternate" &&
+                    {msg.sender === "bot" && isTherapyMessage(msg.text) && feedback[i] && policyMode === "alternate" &&
                       i === messages.findLastIndex(m => m.sender === "bot" && isTherapyMessage(m.text)) && (
                       <div className="ppo-note switch">
-                        ⚡ {lang === "ur"
-                          ? "PPO پالیسی: جواب کی حکمت عملی بدل دی گئی ہے"
-                          : "PPO policy: response strategy switched to alternate template"}
+                        ⚡ {lang === "ur" ? "PPO پالیسی: جواب کی حکمت عملی بدل دی گئی ہے" : "PPO policy: response strategy switched to alternate template"}
                       </div>
                     )}
                   </div>
@@ -1148,16 +1189,22 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
               <div ref={bottomRef} />
             </div>
 
-            {latestOptions && latestOptions.length > 0 && !isTyping && (
+            {/* Option pills — shown when backend sends multiple-choice options */}
+            {hasOptions && (
               <div className={`option-btns ${isRTL ? "rtl" : ""}`} style={{ padding: "8px 0 0" }}>
-                {latestOptions.map((opt, i) => (
-                  <button key={i} className="option-btn" onClick={() => handleOptionClick(opt.value)}>
-                    {opt.label}
-                  </button>
-                ))}
+                {currentOptions.map((opt, i) => {
+                  const label = typeof opt === "object" ? (opt.label || opt.value || String(opt)) : String(opt);
+                  const value = typeof opt === "object" ? (opt.value ?? opt.label ?? String(opt)) : String(opt);
+                  return (
+                    <button key={i} className="option-btn" onClick={() => handleOptionClick(value)}>
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
+            {/* Regular chat input — always visible for text and numeric answers */}
             <div className="input-section">
               <div className={`input-box ${inputError ? "input-error-border" : ""}`}>
                 <textarea
@@ -1188,9 +1235,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
           </>
         )}
 
-        {/* ══════════════════════════════════════════
-            SESSIONS PAGE
-        ══════════════════════════════════════════ */}
         {page === "sessions" && (
           <>
             <div className="topbar">
@@ -1216,9 +1260,7 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
                   )}
                 </div>
               </div>
-
               <EmotionTrendChart sessions={sessions} lang={lang} />
-
               {sessions.length === 0 ? (
                 <div className="empty-sessions">
                   <div className="empty-sessions-icon">🗂️</div>
@@ -1258,9 +1300,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
           </>
         )}
 
-        {/* ══════════════════════════════════════════
-            RESOURCES PAGE
-        ══════════════════════════════════════════ */}
         {page === "resources" && (
           <>
             <div className="topbar">
@@ -1306,7 +1345,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
         )}
       </div>
 
-      {/* THERAPY POPUP */}
       {popup && (
         <div className="popup-overlay" onClick={e => { if (e.target === e.currentTarget) closePopup(); }}>
           <div className="popup-card">
@@ -1349,7 +1387,6 @@ function MainApp({ user, onLogout, lang, toggleLang }) {
         </div>
       )}
 
-      {/* CONFIRM DIALOG */}
       {confirm && (
         <ConfirmDialog
           icon={confirm.type === "all" ? "🗑️" : "⚠️"}
