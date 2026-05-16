@@ -28,8 +28,11 @@ import {
 import "./App.css";
 import VoiceCheckIn from "./VoiceCheckIn";
 
-const API_URL = "http://localhost:5000/chat";
-const TTS_URL = "http://localhost:5000/tts";
+const API_URL = "/chat";
+const TTS_URL = "/tts";
+
+// const API_URL = "http://localhost:5000/chat";
+// const TTS_URL = "http://localhost:5000/tts";
 const MAX_INPUT_CHARS = 500;
 
 // ════════════════════════════════════════════════════════════════

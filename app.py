@@ -1,20 +1,15 @@
-# app.py — v13
+# app.py — v14
 #
-# CHANGES vs v12:
+# CHANGES vs v13:
 # ─────────────────────────────────────────────────────────────────────────────
-# ADDED: MongoDB Atlas integration via db.py
+# ADDED: Flask now serves the React frontend build from ./static/
 #
-# What gets saved:
-#   • sessions        — after /voice-intro completes
-#   • biomarkers      — pitch, tone, mfcc, emotion scores
-#   • chat_history    — every user + assistant message
-#   • predictions     — ML result, fusion mode, CBT level
-#   • feedback        — thumbs up / thumbs down signals
-#
-# ALL OTHER LOGIC IDENTICAL TO v12.
+# The Dockerfile builds the React app and copies the output into ./static/.
+# Flask serves index.html for any non-API route so React Router works.
+# ALL OTHER LOGIC IDENTICAL TO v13.
 # ─────────────────────────────────────────────────────────────────────────────
 
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory
 from flask_cors import CORS
 
 from backend.conversation_engine import ConversationEngine
@@ -47,8 +42,10 @@ from db import (
 )
 
 
+# ── Static folder points to the React build output ───────────────────────────
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 CORS(app)
 
 engine    = ConversationEngine()
@@ -79,6 +76,30 @@ def _audio_suffix(audio_file) -> str:
         if fragment in ct:
             return suffix
     return ".webm"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  REACT FRONTEND SERVING
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/")
+def serve_react():
+    """Serve the React app's index.html."""
+    return send_from_directory(STATIC_DIR, "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path):
+    """
+    Serve React static assets (JS, CSS, images).
+    For any unknown path (React routes), fall back to index.html
+    so client-side routing works correctly.
+    """
+    file_path = os.path.join(STATIC_DIR, path)
+    if os.path.isfile(file_path):
+        return send_from_directory(STATIC_DIR, path)
+    # Unknown path → let React Router handle it
+    return send_from_directory(STATIC_DIR, "index.html")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -668,7 +689,6 @@ def chat():
                 "options": q["options"],
             })
 
-        # Save user answer to MongoDB
         try:
             save_chat_message(session_id, "screening", "user", user_input)
         except Exception as db_exc:
@@ -733,11 +753,6 @@ def chat():
         current_q = questions[idx]
 
         if not user_input:
-            print(
-                f"[chat/features] Blank input at idx={idx} "
-                f"(col='{current_q['col']}') — re-sending question.",
-                flush=True,
-            )
             info    = _resolve_feature(current_q, lang)
             payload = {"message": info["question"]}
             if info["options"]:
@@ -754,7 +769,6 @@ def chat():
                 payload["options"] = info["options"]
             return jsonify(payload)
 
-        # Save user feature answer
         try:
             save_chat_message(session_id, "features", "user", user_input)
         except Exception as db_exc:
@@ -775,57 +789,25 @@ def chat():
                 payload["options"] = info["options"]
             return jsonify(payload)
 
-        # ══════════════════════════════════════════════════════════════════════
-        # ALL FEATURE QUESTIONS ANSWERED — begin fusion + prediction pipeline
-        # ══════════════════════════════════════════════════════════════════════
         sess["stage"] = "done"
         level         = "medium"
         prediction    = None
         features      = dict(sess["feature_answers"])
         combined      = {}
 
-        # ══════════════════════════════════════════════════════════════════════
-        # STAGE A — ML PREDICTION
-        # ══════════════════════════════════════════════════════════════════════
         try:
-            print(
-                f"[chat/stageA] Running ML for condition='{condition}'  "
-                f"features={features}",
-                flush=True,
-            )
             prediction = engine.run_prediction(condition, features)
-            print(
-                f"[chat/stageA] Raw prediction={prediction!r}  "
-                f"type={type(prediction).__name__}",
-                flush=True,
-            )
         except Exception as exc:
-            print(
-                f"[chat/stageA] ❌ ML FAILED for condition='{condition}': {exc}",
-                flush=True,
-            )
-            print(
-                f"[chat/stageA] feature keys: {list(features.keys())}",
-                flush=True,
-            )
+            print(f"[chat/stageA] ❌ ML FAILED: {exc}", flush=True)
             _tb.print_exc()
 
         if prediction is not None:
             try:
                 mapped = engine.map_prediction_to_level(prediction)
                 level  = mapped if mapped else _map_level(prediction, condition)
-                print(
-                    f"[chat/stageA] condition='{condition}'  "
-                    f"prediction={prediction!r}  text_level='{level}'",
-                    flush=True,
-                )
             except Exception as exc:
-                print(f"[chat/stageA] ⚠️  Level mapping error: {exc}", flush=True)
                 level = _map_level(prediction, condition)
 
-        # ══════════════════════════════════════════════════════════════════════
-        # STAGE B — VOICE + TEXT FUSION
-        # ══════════════════════════════════════════════════════════════════════
         try:
             if prediction is not None:
                 try:
@@ -835,13 +817,6 @@ def chat():
             else:
                 level_int_for_fusion = _LEVEL_TO_INT.get(level, 1)
 
-            print(
-                f"[chat/stageB] Calling combiner — "
-                f"condition='{condition}'  level_int={level_int_for_fusion}  "
-                f"voice_fusion={voice_fusion}  voice_dominant='{voice_dominant}'",
-                flush=True,
-            )
-
             combined = EmotionFusionCombiner.combine(
                 condition_text  = condition,
                 level_int_text  = level_int_for_fusion,
@@ -849,45 +824,23 @@ def chat():
                 voice_dominant  = voice_dominant,
                 text_confidence = 0.70,
             )
-
             condition      = combined["condition"]
             level          = combined["level"]
             voice_dominant = combined["voice_dominant"]
-
-            print(
-                f"[chat/stageB] FUSION RESULT — "
-                f"mode={combined['fusion_mode']}  "
-                f"condition='{condition}'  level='{level}'  "
-                f"voice_dominant='{voice_dominant}'",
-                flush=True,
-            )
-            print(f"[chat/stageB] explanation: {combined['explanation']}", flush=True)
-
         except Exception as exc:
-            print(
-                f"[chat/stageB] ⚠️  EmotionFusionCombiner.combine() error: {exc}  "
-                f"— keeping text result: condition='{condition}'  level='{level}'",
-                flush=True,
-            )
+            print(f"[chat/stageB] ⚠️  Fusion error: {exc}", flush=True)
             _tb.print_exc()
 
-        # ══════════════════════════════════════════════════════════════════════
-        # STAGE C — CBT TEMPLATE SELECTION
-        # ══════════════════════════════════════════════════════════════════════
         try:
             cbt_text = build_cbt_message(
-                condition,
-                level,
-                lang,
-                policy_mode    = policy_mode,
-                voice_dominant = voice_dominant,
+                condition, level, lang,
+                policy_mode=policy_mode,
+                voice_dominant=voice_dominant,
             )
         except Exception as exc:
             print(f"[chat/stageC] ⚠️  build_cbt_message error: {exc}", flush=True)
-            _tb.print_exc()
             cbt_text = ui("fallback", lang)
 
-        # ── MongoDB: save prediction + final CBT message ──────────────────
         try:
             screening_scores = engine.calculate_screening_scores(sess["screening_answers"])
             save_prediction(
@@ -900,10 +853,8 @@ def chat():
                 voice_dominant   = voice_dominant,
             )
             save_chat_message(session_id, "result", "assistant", cbt_text)
-            print(f"[chat/result] ✅ MongoDB saved prediction + CBT message", flush=True)
         except Exception as db_exc:
             print(f"[chat/result] ⚠️  MongoDB save failed: {db_exc}", flush=True)
-        # ─────────────────────────────────────────────────────────────────
 
         return jsonify({
             "message":        cbt_text,
@@ -1013,9 +964,7 @@ def feedback_route():
         "timestamp":  body.get("timestamp"),
     }
     _feedback_log.append(entry)
-    print(f"[FEEDBACK] {entry}", flush=True)
 
-    # ── MongoDB: save feedback ────────────────────────────────────────────
     try:
         save_feedback(
             session_id    = entry["session_id"],
@@ -1023,10 +972,8 @@ def feedback_route():
             feedback_type = entry["type"],
             reward        = entry["reward"],
         )
-        print(f"[feedback] ✅ MongoDB saved feedback", flush=True)
     except Exception as db_exc:
         print(f"[feedback] ⚠️  MongoDB save failed: {db_exc}", flush=True)
-    # ─────────────────────────────────────────────────────────────────────
 
     total      = len(_feedback_log)
     positives  = sum(1 for e in _feedback_log if e["type"] == "up")
@@ -1075,11 +1022,6 @@ def debug_voice():
     finally:
         if os.path.exists(audio_path):
             os.remove(audio_path)
-
-
-@app.route("/")
-def home():
-    return "SentiCare backend is running!"
 
 
 if __name__ == "__main__":
