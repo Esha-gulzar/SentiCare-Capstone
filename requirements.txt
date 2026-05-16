@@ -5,6 +5,11 @@ pymongo
 numpy
 joblib
 pandas
-scikit-learn
+scikit-learn==1.8.0
 requests
 gunicorn
+openai-whisper
+librosa
+soundfile
+transformers
+torch
