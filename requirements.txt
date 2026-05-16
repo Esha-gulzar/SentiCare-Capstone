@@ -13,3 +13,4 @@ librosa
 soundfile
 transformers
 torch
+python-dotenv
